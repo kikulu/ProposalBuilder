@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<title>服務建議書製作器</title>
+<style>
+:root{--bg:#f3f6f5;--pn:#fff;--ink:#16222b;--mut:#5d6b74;--ln:#d5dedb;--ac:#0e6b62;--acb:#dcefec;--hit:#a14a08;--hitb:#fbe9d6}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 "Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif}
+header{display:flex;gap:12px;align-items:center;padding:8px 20px;background:var(--ink);color:#fff}
+header h1{font-size:18px;margin:0 8px 0 0}header select{font:inherit}
+header .sp{flex:1}
+nav button{background:none;border:0;color:#b9c8c4;padding:6px 14px;cursor:pointer;border-bottom:2px solid transparent;font:inherit}
+nav button.on{color:#fff;border-color:#5fd0c2}
+main{display:grid;grid-template-columns:minmax(320px,440px) 1fr;gap:16px;padding:16px 20px;height:calc(100vh - 52px)}
+main[hidden]{display:none}
+section{background:var(--pn);border:1px solid var(--ln);border-radius:6px;padding:14px;overflow:auto;min-height:0}
+h2{font-size:15px;margin:12px 0 6px}h2:first-child{margin-top:0}
+label{display:block;font-size:13px;color:var(--mut);margin-top:8px}
+input[type=text],textarea,select{width:100%;font:inherit;padding:6px 8px;border:1px solid var(--ln);border-radius:4px;background:#fff;color:var(--ink)}
+textarea{resize:vertical}
+button.b{font:inherit;padding:5px 12px;border:1px solid var(--ac);background:var(--ac);color:#fff;border-radius:4px;cursor:pointer}
+button.b.g{background:#fff;color:var(--ac)}button.b.d{border-color:#b3261e;color:#b3261e;background:#fff}
+button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--ac);outline-offset:1px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}.mut{color:var(--mut);font-size:13px}
+.ch{margin-top:10px;border-top:1px solid var(--ln);padding-top:8px}
+.ch>label{font-weight:700;color:var(--ink);margin:0;display:flex;gap:6px;align-items:center}
+.bk{margin:4px 0 0 22px;color:var(--ink);font-size:14px;display:flex;gap:6px;align-items:center}
+.tag{font-size:12px;background:var(--hitb);color:var(--hit);padding:0 6px;border-radius:9px}
+#out{height:calc(100% - 44px);font:13px/1.6 ui-monospace,Menlo,Consolas,monospace}
+.tr{display:flex;align-items:center;gap:4px;padding:3px 6px;border-radius:4px;cursor:pointer}
+.tr.on{background:var(--acb)}.tr.c{font-weight:700;margin-top:6px}.tr.k{margin-left:20px}
+.tr span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tr i{font-style:normal;color:var(--mut);padding:0 4px;border-radius:3px}.tr i:hover{background:#fff;color:var(--ink)}
+.hv{display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid var(--ln);font-size:13px}.hv span{flex:1}
+#toast{position:fixed;right:20px;bottom:20px;background:var(--ink);color:#fff;padding:8px 14px;border-radius:4px;opacity:0;transition:opacity .2s;max-width:60vw}
+#toast.on{opacity:1}
+</style>
+</head>
+<body>
+<header>
+  <h1>服務建議書製作器</h1>
+  <select id="tsel" aria-label="選擇範本"></select>
+  <nav><button data-t="make" class="on">製作建議書</button><button data-t="edit">維護範本</button><button data-t="lib">區塊庫</button></nav>
+  <span class="sp"></span>
+  <button class="b" id="save">儲存</button>
+</header>
+
+<main id="make">
+  <section>
+    <h2>基本資料</h2>
+    <label>案名<input type="text" data-m="案名"></label>
+    <label>招標機關 / 客戶<input type="text" data-m="機關"></label>
+    <label>提案公司<input type="text" data-m="公司"></label>
+    <label>日期<input type="text" data-m="日期"></label>
+    <label>貼上 RFP 內容（含關鍵字的區塊會標示「RFP」）<textarea id="rfp" rows="5"></textarea></label>
+    <div class="row"><button class="b g" id="hitsel">勾選 RFP 命中項目</button><button class="b g" id="all">全選</button><button class="b g" id="none">清除</button></div>
+    <div id="list"></div>
+  </section>
+  <section>
+    <div class="row" style="margin-top:0">
+      <button class="b" id="exdocx">匯出 Word (.docx)</button><button class="b g" id="exmd">匯出 Markdown</button><button class="b g" id="copy">複製</button>
+      <span class="mut">可直接於下方微調；再次勾選會重新產生</span>
+    </div>
+    <textarea id="out" spellcheck="false"></textarea>
+  </section>
+</main>
+
+<main id="edit" hidden>
+  <section>
+    <div class="row" style="margin-top:0"><button class="b g" id="tnew">新增範本</button><button class="b g" id="tcopy">複製範本</button><button class="b d" id="tdel">刪除範本</button></div>
+    <div class="row"><button class="b g" id="cadd">＋章節</button><button class="b d" id="reset">還原預設</button></div>
+    <div id="tree"></div>
+  </section>
+  <section id="ed"></section>
+</main>
+
+<main id="lib" hidden>
+  <section>
+    <div class="row" style="margin-top:0"><input type="text" id="q" placeholder="搜尋區塊標題／內容／關鍵字" style="flex:1"><button class="b" id="ladd">新增</button></div>
+    <div id="liblist"></div>
+  </section>
+  <section id="libed"></section>
+</main>
+<div id="toast"></div>
+<script src="renderer.js"></script>
+</body>
+</html>
