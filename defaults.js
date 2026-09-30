@@ -90,4 +90,33 @@ const library = [
   { id: uid(), title: '廠商聲明', content: '本公司未有違反政府採購法之情事，且所提資料均屬實，如有不實願負一切法律責任。', keywords: ['廠商聲明', '拒絕往來', '採購法'] }
 ];
 
-module.exports = { templates: [dev, maint], library };
+// Word 格式範本（匯出 .docx 時套用）。欄位說明見 mdToDocx.js 的 DEFAULT_WORD_STYLE
+const wsBase = { lineSpacing: 1.15, paraAfter: 6, page: { size: 'A4', landscape: false, margin: { top: 2.54, bottom: 2.54, left: 2.54, right: 2.54 } },
+  header: '', headerAlign: 'right', footer: '', footerAlign: 'center', pageNumber: 'full', chapterPageBreak: false };
+const wordStyles = [
+  { ...wsBase, id: 'ws-default', name: '預設（青綠）', fontEastAsia: 'Microsoft JhengHei', fontAscii: 'Calibri',
+    sizes: { body: 11, title: 22, h1: 16, h2: 13, h3: 12 }, colors: { title: '16222B', h1: '0E6B62', h2: '16222B', h3: '16222B', tableHead: 'DCEFEC', quote: '0E6B62' } },
+  { ...wsBase, id: 'ws-formal', name: '正式文件（標楷體・黑字）', fontEastAsia: '標楷體', fontAscii: 'Times New Roman',
+    sizes: { body: 12, title: 20, h1: 16, h2: 14, h3: 12 }, colors: { title: '000000', h1: '000000', h2: '000000', h3: '000000', tableHead: 'E7E6E6', quote: '7F7F7F' },
+    lineSpacing: 1.5, header: '{{案名}}', footer: '{{公司}}', footerAlign: 'left', chapterPageBreak: true },
+  { ...wsBase, id: 'ws-blue', name: '簡約藍（微軟正黑體）', fontEastAsia: 'Microsoft JhengHei', fontAscii: 'Arial',
+    sizes: { body: 11, title: 24, h1: 17, h2: 14, h3: 12 }, colors: { title: '1F3864', h1: '1F4E79', h2: '2E74B5', h3: '404040', tableHead: 'DEEAF6', quote: '2E74B5' } }
+];
+
+// 內建範本的區塊也放進區塊庫，讓人可跨範本挑選。分類：「範本名｜章節」；兩個以上範本內容相同者歸「共用｜章節」並只留一份
+const tplLibrary = (() => {
+  const map = new Map();
+  [dev, maint].forEach(t => t.chapters.forEach(c => c.blocks.forEach(b => {
+    const k = b.title + '\u0000' + b.content, e = map.get(k) || { b, c, tpls: new Set() };
+    e.tpls.add(t.name); map.set(k, e);
+  })));
+  return [...map.values()].map(({ b, c, tpls }) => ({
+    id: uid(), title: b.title, content: b.content, keywords: [...(b.keywords || [])],
+    group: (tpls.size > 1 ? '共用' : [...tpls][0]) + '｜' + c.title
+  }));
+})();
+library.forEach(b => b.group = b.group || '共用聲明');
+library.push(...tplLibrary);
+const LIB_SEED = 2;   // 區塊庫內容版本；既有資料在載入時補入尚未有的內建區塊（每個版本只補一次，之後刪除不會再出現）
+
+module.exports = { templates: [dev, maint], library, libSeed: LIB_SEED, wordStyles, defaultWordStyle: 'ws-default' };

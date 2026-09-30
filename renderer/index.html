@@ -2,52 +2,173 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src data:">
 <title>服務建議書製作器</title>
 <style>
-:root{--bg:#f3f6f5;--pn:#fff;--ink:#16222b;--mut:#5d6b74;--ln:#d5dedb;--ac:#0e6b62;--acb:#dcefec;--hit:#a14a08;--hitb:#fbe9d6}
+:root{--bg:#f3f6f5;--pn:#fff;--ink:#16222b;--mut:#5d6b74;--ln:#d5dedb;--ac:#0e6b62;--acb:#dcefec;--hit:#a14a08;--hitb:#fbe9d6;--hh:0px}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 "Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif}
-header{display:flex;gap:12px;align-items:center;padding:8px 20px;background:var(--ink);color:#fff}
-header h1{font-size:18px;margin:0 8px 0 0}header select{font:inherit}
+[hidden]{display:none!important}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 "Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;display:flex;flex-direction:column;overflow:hidden}
+header{display:flex;gap:8px 12px;align-items:center;flex-wrap:wrap;padding:8px 20px;background:var(--ink);color:#fff;flex:none;z-index:5}
+header h1{font-size:18px;margin:0 8px 0 0;white-space:nowrap}header select{font:inherit;width:auto;max-width:100%}
 header .sp{flex:1}
-nav button{background:none;border:0;color:#b9c8c4;padding:6px 14px;cursor:pointer;border-bottom:2px solid transparent;font:inherit}
-nav button.on{color:#fff;border-color:#5fd0c2}
-main{display:grid;grid-template-columns:minmax(320px,440px) 1fr;gap:16px;padding:16px 20px;height:calc(100vh - 52px)}
+#pnav{display:flex;overflow-x:auto;scrollbar-width:none}#pnav::-webkit-scrollbar{display:none}
+#pnav button{position:relative;display:flex;align-items:center;gap:6px;background:none;border:0;color:#b9c8c4;padding:6px 14px;cursor:pointer;border-bottom:2px solid transparent;font:inherit;white-space:nowrap}
+#pnav button:hover{color:#fff}#pnav button[aria-current=page]{color:#fff;border-color:#5fd0c2;font-weight:600}
+#pnav .ni{font-size:15px;line-height:1}#pnav .dot{position:absolute;top:4px;right:6px;width:8px;height:8px;border-radius:50%;background:#f5a524}
+#snav{display:flex;gap:2px;padding:0 20px;background:#fff;border-bottom:1px solid var(--ln);overflow-x:auto;scrollbar-width:none;flex:none;z-index:4}#snav::-webkit-scrollbar{display:none}
+#snav button{background:none;border:0;border-bottom:2px solid transparent;color:var(--mut);padding:8px 14px;font:inherit;cursor:pointer;white-space:nowrap}
+#snav button:hover{color:var(--ink)}#snav button[aria-current=page]{color:var(--ac);border-color:var(--ac);font-weight:600}
+#pnav button:focus-visible,#snav button:focus-visible{outline:2px solid #5fd0c2;outline-offset:-2px}#snav button:focus-visible{outline-color:var(--ac)}
+#save.clean{background:transparent;color:#9fb1ab;border-color:#3a4a55}
+#make{grid-template-rows:auto minmax(0,1fr)}
+/* 製作進度列 */
+.flow{background:#fff;border:1px solid var(--ln);border-radius:6px;padding:8px 12px;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
+.flow ol{display:flex;flex-wrap:wrap;gap:6px 8px;margin:0;padding:0;list-style:none}
+.stp{border:1px solid var(--ln);border-radius:16px;padding:2px 12px;background:#fff;font:inherit;font-size:13px;cursor:pointer;color:var(--mut)}
+.stp.done{background:var(--acb);border-color:var(--ac);color:var(--ac)}.stp.cur{border-color:var(--hit);background:var(--hitb);color:var(--hit);font-weight:600}
+.flow .nx{margin-left:auto;font-size:13px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}.flow .nx .b{padding:3px 12px;font-size:13px}
+.welcome{flex-basis:100%;background:var(--acb);border-radius:4px;padding:6px 10px;font-size:13px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}.welcome span{flex:1 1 200px}
+.gd h2{margin:14px 0 4px}.gd ol{margin:4px 0;padding-left:0;list-style:none}.gd li{display:flex;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid #eef2f1}.gd li .tx{flex:1;min-width:0}.gd li b{display:block;font-size:14px}.gd li small{color:var(--mut)}
+.gd kbd{background:#eef2f1;border:1px solid var(--ln);border-radius:3px;padding:0 5px;font-size:12px}
+main{display:grid;grid-template-columns:minmax(320px,440px) 1fr;gap:16px;padding:16px 20px;flex:1;min-height:0}
 main[hidden]{display:none}
-section{background:var(--pn);border:1px solid var(--ln);border-radius:6px;padding:14px;overflow:auto;min-height:0}
+section{background:var(--pn);border:1px solid var(--ln);border-radius:6px;padding:14px;overflow:auto;min-height:0;min-width:0}
 h2{font-size:15px;margin:12px 0 6px}h2:first-child{margin-top:0}
 label{display:block;font-size:13px;color:var(--mut);margin-top:8px}
-input[type=text],textarea,select{width:100%;font:inherit;padding:6px 8px;border:1px solid var(--ln);border-radius:4px;background:#fff;color:var(--ink)}
+input[type=text],input[type=number],textarea,select{width:100%;font:inherit;padding:6px 8px;border:1px solid var(--ln);border-radius:4px;background:#fff;color:var(--ink)}
+input[type=color]{width:100%;height:34px;padding:2px;border:1px solid var(--ln);border-radius:4px;background:#fff}
 textarea{resize:vertical}
 button.b{font:inherit;padding:5px 12px;border:1px solid var(--ac);background:var(--ac);color:#fff;border-radius:4px;cursor:pointer}
 button.b.g{background:#fff;color:var(--ac)}button.b.d{border-color:#b3261e;color:#b3261e;background:#fff}
 button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--ac);outline-offset:1px}
-.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}.mut{color:var(--mut);font-size:13px}
-.ch{margin-top:10px;border-top:1px solid var(--ln);padding-top:8px}
-.ch>label{font-weight:700;color:var(--ink);margin:0;display:flex;gap:6px;align-items:center}
-.bk{margin:4px 0 0 22px;color:var(--ink);font-size:14px;display:flex;gap:6px;align-items:center}
-.tag{font-size:12px;background:var(--hitb);color:var(--hit);padding:0 6px;border-radius:9px}
-#out{height:calc(100% - 44px);font:13px/1.6 ui-monospace,Menlo,Consolas,monospace}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}.mut{color:var(--mut);font-size:13px}p.mut{margin:6px 0}
+.row select{width:auto;max-width:100%}
+.tag{font-size:12px;background:var(--hitb);color:var(--hit);padding:0 6px;border-radius:9px;white-space:nowrap}
 .tr{display:flex;align-items:center;gap:4px;padding:3px 6px;border-radius:4px;cursor:pointer}
 .tr.on{background:var(--acb)}.tr.c{font-weight:700;margin-top:6px}.tr.k{margin-left:20px}
 .tr span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tr i{font-style:normal;color:var(--mut);padding:0 4px;border-radius:3px}.tr i:hover{background:#fff;color:var(--ink)}
+.gh{font-size:12px;font-weight:700;color:var(--ac);margin:10px 0 2px;padding:0 6px}.gh:first-child{margin-top:0}
+.tr.doc{display:block;padding:6px 8px}.tr.doc small{display:block;color:var(--mut);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .hv{display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid var(--ln);font-size:13px}.hv span{flex:1}
-#toast{position:fixed;right:20px;bottom:20px;background:var(--ink);color:#fff;padding:8px 14px;border-radius:4px;opacity:0;transition:opacity .2s;max-width:60vw}
+
+/* 製作建議書：可拖曳排序的章節/區塊清單 */
+.ch{margin-top:10px;border-top:1px solid var(--ln);padding-top:6px;border-radius:4px}
+.ch>.hd{display:flex;align-items:center;gap:2px;font-weight:700;padding:2px 0;border-radius:4px}
+.bk{margin:2px 0 0 18px;font-size:14px;display:flex;gap:2px;align-items:center;padding:1px 0;border-radius:4px}
+.lb{flex:1;min-width:0;display:flex;gap:6px;align-items:center;margin:0;color:var(--ink);font-size:inherit;cursor:pointer}
+.lb span{overflow-wrap:anywhere}
+.grip{cursor:grab;color:#9aa8a3;padding:0 4px;user-select:none;font-size:14px;line-height:1}
+.ic{border:0;background:none;color:var(--mut);cursor:pointer;padding:2px 6px;border-radius:3px;font:inherit;line-height:1.4;flex:none}
+.ic:hover{background:var(--acb);color:var(--ink)}.ic.x:hover{background:#fbe3e1;color:#b3261e}
+.dragging{opacity:.35}
+.drop-before{box-shadow:0 -3px 0 var(--ac)}.drop-after{box-shadow:0 3px 0 var(--ac)}.drop-in{background:var(--acb)}
+.empty{margin:4px 0 0 18px;padding:6px;border:1px dashed var(--ln);border-radius:4px;color:var(--mut);font-size:13px}
+
+/* 右側：內容 / 預覽 */
+#rsec,#docview{display:flex;flex-direction:column}
+#out,#pv,#dta,#dpv{flex:1;min-height:0}#pv,#dpv{overflow:auto}
+#out,#dta{font:13px/1.6 ui-monospace,Menlo,Consolas,monospace}
+.md{line-height:1.8;padding:4px 10px}.md h1{font-size:24px}.md h2{font-size:19px;color:var(--ac);border-bottom:1px solid var(--ln);padding-bottom:2px}.md h3{font-size:16px}
+.md table{border-collapse:collapse;width:100%;margin:8px 0}.md th,.md td{border:1px solid var(--ln);padding:4px 8px;text-align:left}.md th{background:var(--acb)}
+.md blockquote{margin:8px 0;padding:2px 12px;border-left:3px solid var(--ac);color:var(--mut)}.md ul,.md ol{margin:4px 0;padding-left:22px}
+.md code{background:#eef2f1;padding:0 4px;border-radius:3px}.md figure{margin:12px 0;text-align:center}.md figure img{max-width:100%}.md figcaption{font-size:13px;color:var(--mut)}
+.md .miss{color:#b3261e}
+
+/* Word 格式 */
+.fg{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:4px 10px}.fg label{margin-top:4px}
+.chk{display:flex;gap:6px;align-items:center;margin-top:10px;color:var(--ink);font-size:14px}
+.chk input{width:auto}
+#wsp{border:1px solid var(--ln);border-radius:6px;background:#eef2f1;padding:12px;overflow:auto}
+#wsp .pg{background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.18);padding:22px 26px;max-width:520px;margin:0 auto}
+#wsp .hf{font-size:11px;color:#777;display:flex}#wsp table{border-collapse:collapse;width:100%;margin:8px 0}#wsp td,#wsp th{border:1px solid #bbb;padding:2px 6px;font-size:.9em;text-align:left}
+
+/* 檔案庫 / 設定 */
+.fi{display:flex;gap:10px;align-items:center;padding:6px;border-radius:4px;cursor:pointer}.fi.on{background:var(--acb)}
+.fi .th{width:44px;height:44px;flex:none;border-radius:4px;background:#eef2f1;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--ac);overflow:hidden;text-transform:uppercase}
+.fi .th img{width:100%;height:100%;object-fit:cover}
+.fi .t{flex:1;min-width:0}.fi .t b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;font-size:14px}.fi .t small{color:var(--mut);font-size:12px}
+.bigimg{max-width:100%;max-height:52vh;border:1px solid var(--ln);border-radius:6px;background:#fff;display:block;margin:8px 0}
+.card{border:1px solid var(--ln);border-radius:6px;padding:12px;margin:12px 0}.card h2{margin-top:0}
+.pathbox{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0}.pathbox input{flex:1 1 260px;width:auto;background:#f3f6f5}
+.warn{background:var(--hitb);color:var(--hit);border-radius:4px;padding:6px 10px;margin:8px 0;font-size:13px}
+dl.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:8px 0;font-size:14px}dl.kv dt{color:var(--mut)}dl.kv dd{margin:0;overflow-wrap:anywhere}
+
+/* 進階：標籤、批次列、差異、版本歷史 */
+.chip{display:inline-block;font-size:11px;line-height:1.6;background:#eef2f1;color:var(--mut);border-radius:9px;padding:0 7px;margin:2px 4px 0 0;white-space:nowrap}
+.chip.w{background:var(--hitb);color:var(--hit)}.chip.g{background:var(--acb);color:var(--ac)}
+.star{color:#d9a400}
+.bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;background:var(--acb);border-radius:6px;padding:6px 8px;margin:8px 0}.bar .b{padding:3px 9px;font-size:13px}
+.mk{margin-right:6px;vertical-align:middle;width:auto}
+.df{font:12px/1.55 ui-monospace,Menlo,Consolas,monospace;border:1px solid var(--ln);border-radius:6px;overflow:auto;max-height:52vh;margin:8px 0;background:#fff}
+.df div{padding:0 8px;white-space:pre-wrap;overflow-wrap:anywhere;min-height:1.55em}.df .a{background:#e6f6ea}.df .d{background:#fde8e6}.df .s{color:var(--mut);background:#f3f6f5;text-align:center;font-style:italic}
+.dh{font-size:13px;margin:6px 0}.dh b{color:var(--ac)}
+.cm{padding:7px 8px;border-radius:4px;cursor:pointer;border-bottom:1px solid #eef2f1}.cm.on{background:var(--acb)}.cm b{display:block;font-weight:600;font-size:14px;overflow-wrap:anywhere}.cm small{color:var(--mut);font-size:12px}
+.fl{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:6px 0;border-bottom:1px solid var(--ln);font-size:14px}.fl .nm{flex:1 1 200px;min-width:0;overflow-wrap:anywhere}
+.st{font-size:11px;border-radius:3px;padding:0 5px;font-weight:700}.st.A{background:#e6f6ea;color:#1b6b34}.st.M{background:#fff3d6;color:#8a5a00}.st.D{background:#fde8e6;color:#b3261e}
+@media (max-width:520px){.bar .b{flex:1 1 auto}}
+
+/* 對話框 / 提示 */
+#modal{position:fixed;inset:0;background:rgba(22,34,43,.55);display:flex;align-items:center;justify-content:center;z-index:9;padding:12px}
+#modal[hidden]{display:none}.mbox{background:#fff;border-radius:8px;padding:16px;width:min(720px,100%);max-height:88vh;overflow:auto}
+.mh{position:sticky;top:-16px;background:#fff;margin:-16px -16px 8px;padding:12px 16px 8px;z-index:1}.mh b{flex:1}
+.pick{display:flex;gap:8px;align-items:center;padding:6px 4px;border-bottom:1px solid var(--ln);font-size:14px}.pick span{flex:1;min-width:0;overflow-wrap:anywhere}
+#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-top:10px}
+.thumb{border:1px solid var(--ln);border-radius:6px;padding:6px;cursor:pointer;text-align:center}.thumb:hover{border-color:var(--ac);background:var(--acb)}.thumb img{max-width:100%;max-height:90px}
+#toast{position:fixed;right:20px;bottom:20px;background:var(--ink);color:#fff;padding:8px 14px;border-radius:4px;opacity:0;transition:opacity .2s;max-width:60vw;pointer-events:none;z-index:10}
 #toast.on{opacity:1}
+
+/* ---- RWD ---- */
+@media (max-width:960px){
+  main{grid-template-columns:minmax(280px,340px) 1fr;gap:12px;padding:12px}
+}
+@media (max-width:820px){
+  body{display:block;height:auto;overflow:auto}
+  header{position:sticky;top:0;padding:8px 12px}header h1{font-size:16px}
+  header .sp{display:none}header #tsel{flex:1;min-width:0}header .ht{display:none}header #help{padding:5px 11px}
+  body{padding-bottom:calc(58px + env(safe-area-inset-bottom,0px))}
+  #pnav{position:fixed;left:0;right:0;bottom:0;z-index:8;background:var(--ink);border-top:1px solid #33434e;padding-bottom:env(safe-area-inset-bottom,0px)}
+  #pnav button{flex:1;flex-direction:column;justify-content:center;gap:1px;padding:7px 2px 6px;font-size:12px;border-bottom:0;border-top:2px solid transparent;min-width:0}
+  #pnav button[aria-current=page]{border-top-color:#5fd0c2}#pnav .ni{font-size:17px}#pnav .dot{top:3px;right:calc(50% - 20px)}
+  #snav{position:sticky;top:var(--hh);padding:0 6px}
+  .flow .nx{margin-left:0;flex-basis:100%}
+  main{display:block;padding:10px}
+  section{overflow:visible;margin-bottom:12px;padding:12px}
+  #out,#dta{min-height:60vh;flex:none}#pv,#dpv{min-height:50vh;max-height:none;flex:none}
+  #rsec,#docview{display:block}
+  #toast{left:12px;right:12px;bottom:calc(68px + env(safe-area-inset-bottom,0px));max-width:none;text-align:center}
+}
+@media (max-width:520px){
+  body{font-size:14px}
+  .row .b,.row select{flex:1 1 auto}
+  .fg{grid-template-columns:repeat(2,1fr)}
+  .mbox{padding:12px}.mh{margin:-12px -12px 8px;padding:10px 12px 8px;top:-12px}
+  #wsp .pg{padding:14px}
+}
+@media (pointer:coarse){.ic{padding:8px 11px}.grip{padding:8px 6px}.tr{padding:8px 6px}#snav button{padding:11px 14px}button.b{padding:8px 14px}}
 </style>
 </head>
 <body>
 <header>
   <h1>服務建議書製作器</h1>
   <select id="tsel" aria-label="選擇範本"></select>
-  <nav><button data-t="make" class="on">製作建議書</button><button data-t="edit">維護範本</button><button data-t="lib">區塊庫</button></nav>
+  <nav id="pnav" aria-label="主要導覽">
+    <button data-g="make"><span class="ni" aria-hidden="true">✎</span><span class="nl">製作</span></button>
+    <button data-g="docs"><span class="ni" aria-hidden="true">▤</span><span class="nl">文件庫</span></button>
+    <button data-g="assets"><span class="ni" aria-hidden="true">◧</span><span class="nl">素材與範本</span><i class="dot" hidden title="有未儲存的變更"></i></button>
+    <button data-g="sys"><span class="ni" aria-hidden="true">⚙</span><span class="nl">版本與設定</span></button>
+  </nav>
   <span class="sp"></span>
-  <button class="b" id="save">儲存</button>
+  <button class="b g hb" id="help" title="使用流程說明">？<span class="ht"> 使用流程</span></button>
+  <button class="b clean" id="save" title="儲存範本／區塊庫／Word 格式的變更（Ctrl+S）">已儲存</button>
 </header>
+<nav id="snav" aria-label="次要導覽" hidden></nav>
 
 <main id="make">
+  <div id="flow" class="flow" style="grid-column:1/-1" aria-label="製作進度"></div>
   <section>
     <h2>基本資料</h2>
     <label>案名<input type="text" data-m="案名"></label>
@@ -56,14 +177,21 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
     <label>日期<input type="text" data-m="日期"></label>
     <label>貼上 RFP 內容（含關鍵字的區塊會標示「RFP」）<textarea id="rfp" rows="5"></textarea></label>
     <div class="row"><button class="b g" id="hitsel">勾選 RFP 命中項目</button><button class="b g" id="all">全選</button><button class="b g" id="none">清除</button></div>
+    <h2>章節與區塊</h2>
+    <div class="row" style="margin-top:0"><button class="b g" id="wcadd">＋章節</button><button class="b g" id="wreset">從範本重新載入</button></div>
+    <p class="mut">拖曳 ⠿ 或按 ▲▼ 調整順序（區塊可拖到其他章節）；＋ 新增區塊、✎ 修改內容。這裡的調整只影響本文件，不會改動範本。</p>
     <div id="list"></div>
   </section>
-  <section>
+  <section id="rsec">
     <div class="row" style="margin-top:0">
-      <button class="b" id="exdocx">匯出 Word (.docx)</button><button class="b g" id="exmd">匯出 Markdown</button><button class="b g" id="copy">複製</button>
-      <span class="mut">可直接於下方微調；再次勾選會重新產生</span>
+      <select id="wsel" aria-label="Word 格式範本" title="Word 格式範本"></select>
+      <button class="b" id="exdocx">匯出 Word</button><button class="b g" id="exmd">匯出 Markdown</button><button class="b g" id="copy">複製</button>
     </div>
-    <textarea id="out" spellcheck="false"></textarea>
+    <div class="row" style="margin-top:0">
+      <button class="b g" id="dsave">儲存到文件庫</button><button class="b g" id="dsaveas" hidden>另存新文件</button><button class="b g" id="oimg">插入圖片</button><button class="b g" id="pvt">預覽</button><button class="b g" id="regen" hidden>重新產生</button>
+    </div>
+    <p class="mut" id="dinfo"></p>
+    <textarea id="out" spellcheck="false"></textarea><div id="pv" class="md" hidden></div>
   </section>
 </main>
 
@@ -79,11 +207,69 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 <main id="lib" hidden>
   <section>
     <div class="row" style="margin-top:0"><input type="text" id="q" placeholder="搜尋區塊標題／內容／關鍵字" style="flex:1"><button class="b" id="ladd">新增</button></div>
+    <div class="row" style="margin-top:0"><select id="lg" aria-label="依分類篩選" style="flex:1"></select></div>
     <div id="liblist"></div>
   </section>
   <section id="libed"></section>
 </main>
-<div id="toast"></div>
+
+<main id="docs" hidden>
+  <section>
+    <div class="row" style="margin-top:0"><input type="text" id="dq" placeholder="搜尋標題／內文／標籤／範本" style="flex:1 1 140px;width:auto"><button class="b g" id="dmulti">多選</button></div>
+    <div class="row">
+      <select id="dsort" aria-label="排序"><option value="upd-desc">更新時間（新→舊）</option><option value="upd-asc">更新時間（舊→新）</option><option value="cre-desc">建立時間（新→舊）</option><option value="title">標題</option></select>
+      <select id="dtpl" aria-label="依範本篩選"></select><select id="dtag" aria-label="依標籤篩選"></select>
+      <select id="dtime" aria-label="依更新日期篩選"><option value="all">不限日期</option><option value="1">今天</option><option value="7">近 7 天</option><option value="30">近 30 天</option></select>
+    </div>
+    <div class="row"><button class="b g" id="dbk">備份文件庫</button><button class="b g" id="dimp">匯入備份</button></div>
+    <div id="dbar" class="bar" hidden>
+      <span id="dcnt" class="mut"></span>
+      <button class="b g" id="dall">全選</button><button class="b g" id="dnone">清除</button><button class="b g" id="dstar">★ 釘選</button><button class="b g" id="dtadd">加標籤</button><button class="b g" id="dtrm">移除標籤</button>
+      <button class="b g" id="dbx">匯出 Word</button><button class="b g" id="dbm">匯出 MD</button><button class="b d" id="dbdel">刪除</button>
+    </div>
+    <div id="doclist"></div>
+  </section>
+  <section id="docview"></section>
+</main>
+
+<main id="wst" hidden>
+  <section>
+    <div class="row" style="margin-top:0"><button class="b g" id="wsnew">新增格式</button><button class="b g" id="wscopy">複製</button><button class="b d" id="wsdel">刪除</button></div>
+    <div class="row"><button class="b g" id="wsexp">匯出格式</button><button class="b g" id="wsimp">匯入格式</button></div>
+    <p class="mut">匯出 Word 時套用所選格式。修改後請按右上角「儲存」，格式才會保留。</p>
+    <div id="wslist"></div>
+  </section>
+  <section id="wsed"></section>
+</main>
+
+<main id="files" hidden>
+  <section>
+    <div class="row" style="margin-top:0"><button class="b" id="fupimg">＋上傳圖片</button><button class="b" id="fupatt">＋上傳附件</button><button class="b g" id="fupdir">從資料夾匯入</button></div>
+    <div class="row"><input type="text" id="fq" placeholder="搜尋檔名／標籤" style="flex:1 1 120px;width:auto"><select id="fk" aria-label="檔案類型"><option value="all">全部</option><option value="img">圖片</option><option value="att">附件</option><option value="unused">未使用的圖片</option></select></div>
+    <div class="row"><select id="fsort" aria-label="排序"><option value="time">更新時間</option><option value="name">名稱</option><option value="size">大小（大→小）</option><option value="type">類型</option></select><select id="ftag" aria-label="依標籤篩選"></select><button class="b g" id="fmulti">多選</button></div>
+    <div id="fbar" class="bar" hidden><span id="fcnt" class="mut"></span><button class="b g" id="fall">全選</button><button class="b g" id="fnone">清除</button><button class="b g" id="ftadd">加標籤</button><button class="b g" id="ftrm">移除標籤</button><button class="b g" id="fexp">匯出到資料夾</button><button class="b d" id="fbdel">刪除</button></div>
+    <p class="mut" id="fdirs"></p>
+    <div id="filelist"></div>
+  </section>
+  <section id="fview"></section>
+</main>
+
+<main id="hist" hidden>
+  <section>
+    <div class="row" style="margin-top:0"><select id="hk" aria-label="範圍" style="flex:1 1 120px"><option value="all">全部紀錄</option><option value="doc">文件</option><option value="tpl">範本</option><option value="file">檔案（圖片／標籤）</option><option value="deleted">已刪除的文件</option></select></div>
+    <div class="row"><input type="text" id="hq" placeholder="搜尋紀錄說明（例如文件標題）" style="flex:1 1 140px;width:auto"></div>
+    <div id="hlist"></div>
+  </section>
+  <section id="hview"></section>
+</main>
+
+<main id="set" hidden>
+  <section id="setv" style="grid-column:1/-1;max-width:860px"></section>
+</main>
+
+<div id="modal" hidden><div class="mbox" role="dialog" aria-modal="true" aria-labelledby="mtitle"><div class="row mh"><b id="mtitle"></b><span id="mact"></span><button class="b g" id="mcl">關閉</button></div><div id="mbody"></div></div></div>
+<div id="toast" role="status" aria-live="polite"></div>
+<script src="md.js"></script>
 <script src="renderer.js"></script>
 </body>
 </html>

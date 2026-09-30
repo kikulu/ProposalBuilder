@@ -1,11 +1,13 @@
 {
   "name": "proposal-builder",
-  "version": "2.0.0",
+  "version": "1.0.1",
   "description": "服務建議書製作器（Electron）：依 RFP 勾選章節與區塊，產生 Markdown / Word 建議書",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder"
+    "dist": "electron-builder",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win"
   },
   "dependencies": { "docx": "^9.8.1" },
   "devDependencies": {
@@ -13,8 +15,8 @@
     "electron-builder": "^25.0.0"
   },
   "build": {
-    "appId": "com.example.proposalbuilder",
-    "productName": "服務建議書製作器",
+    "appId": "com.mayaminer.proposalbuilder",
+    "productName": "MayaProposalBuilder",
     "files": ["main.js", "preload.js", "mdToDocx.js", "defaults.js", "renderer/**"],
     "win": { "target": "nsis" },
     "mac": { "target": "dmg" },
