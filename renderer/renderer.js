@@ -43,14 +43,32 @@ const same = (a, b) => a.length >= 2 && b.length >= 2 && (a.includes(b) || b.inc
 const hit = b => { const r = rfpInfo().text; return !!r && ((b.keywords || []).some(k => k && r.includes(k)) || (b.title.length >= 2 && r.includes(b.title))); };
 const chTitleHit = c => rfpInfo().items.some(x => same(x.title, c.title));      // RFP 的大項名稱與章節名稱相符
 const chHit = c => chTitleHit(c) || c.blocks.some(hit);
-// 依 RFP 結構決定要勾選哪些區塊：只有大項 → 章節相符者整章勾選；有子標題 → 只勾命中的區塊（章節相符但沒有區塊命中時才整章勾選）
-function hitBlocks() {
+// 依 RFP 結構決定要勾選哪些區塊，並記下命中原因（供「命中清單」預覽）：
+//   只有大項 → 章節名稱相符者整章勾選；有子標題 → 只勾命中的區塊（章節相符但沒有任何區塊命中時才整章勾選）
+const whyBlock = b => { const r = rfpInfo().text, k = (b.keywords || []).filter(x => x && r.includes(x)); return k.length ? '關鍵字：' + k.join('、') : (b.title.length >= 2 && r.includes(b.title) ? '標題出現在 RFP' : ''); };
+function hitPlan() {
   const info = rfpInfo(), out = [];
-  W.forEach(c => {
-    const hs = c.blocks.filter(hit), byTitle = chTitleHit(c);
-    if (byTitle && (!info.n2 || !hs.length)) out.push(...c.blocks); else out.push(...hs);
+  W.forEach((c, ci) => {
+    const hs = c.blocks.filter(hit), byTitle = chTitleHit(c), whole = byTitle && (!info.n2 || !hs.length);
+    const blocks = whole ? c.blocks : hs; if (!blocks.length) return;
+    out.push({ c, ci, whole, blocks: blocks.map(b => ({ b, why: whyBlock(b) || (whole ? '章節與 RFP 大項相符' : '') })) });
   });
   return out;
+}
+const hitBlocks = () => hitPlan().flatMap(x => x.blocks.map(y => y.b));
+function openHitPreview() {
+  if (!mk) return toast('請先選擇範本或空文件');
+  if (!rfpInfo().text.trim()) return toast('請先貼上 RFP 內容');
+  const plan = hitPlan();
+  if (!plan.length) return openModal('RFP 命中清單', '<p class="mut">RFP 沒有比對到目前章節或區塊。可以調整範本區塊的「RFP 關鍵字」，或直接手動勾選。</p>');
+  openModal('RFP 命中清單（確認後再勾選）', `<div class="hp"><p class="mut">取消勾選的項目不會被選取。已經勾選的區塊會保留。</p>` + plan.map(x =>
+    `<div class="hc">${esc(x.c.title)}${x.whole ? ' <span class="tag">整章</span>' : ''}</div>` + x.blocks.map(y =>
+      `<label class="hb"><input type="checkbox" data-id="${y.b.id}" checked><span>${esc(y.b.title)}${y.why ? `<small>${esc(y.why)}</small>` : ''}${sel.has(y.b.id) ? '<small>（目前已勾選）</small>' : ''}</span></label>`).join('')).join('') + '</div>',
+  body => {
+    const ok = $('#hpok'), upd = () => { const n = body.querySelectorAll('input:checked').length; ok.textContent = `勾選這 ${n} 個區塊`; ok.disabled = !n; };
+    body.onchange = upd; upd();
+    ok.onclick = () => { const ids = [...body.querySelectorAll('input:checked')].map(i => i.dataset.id); closeModal(); mutate(() => ids.forEach(id => sel.add(id)), false); toast(`已勾選 ${ids.length} 個區塊`); };
+  }, '<button class="b" id="hpok">勾選</button>');
 }
 function drawRfpInfo() {
   const i = rfpInfo(), p = $('#rfpinfo');
@@ -152,7 +170,20 @@ function adoptNos(src) {
   DB.templates.forEach(t => { const s = by(src.templates, t.id); if (!s) return; t.no = s.no; t.chapters.forEach(c => { const sc = by(s.chapters, c.id); if (!sc) return; c.no = sc.no; c.blocks.forEach(b => { const sb = by(sc.blocks, b.id); if (sb) b.no = sb.no; }); }); });
   DB.library.forEach(b => { const s = by(src.library, b.id); if (s) b.no = s.no; });
 }
-$('#save').onclick = async () => { const r = await api.save(DB); if (r && r.templates) adoptNos(r); setDirty(false); toast('已儲存範本設定，並建立一個版本'); if (tab === 'edit' && !ed) drawEd(); };
+function askSave() {                                   // 儲存範本／區塊庫／Word 格式：可順便替這個版本取名（選填，寫入 git Tag）
+  if (!isDirty) return toast('沒有需要儲存的變更');
+  openModal('儲存變更', `<p class="mut">儲存後會建立一個新版本並自動編上 Tag 編號。</p>
+    <label>版本名稱（選填）<input type="text" id="svl" maxlength="60" placeholder="例如：新增資安章節、投標版定稿"></label>`, () => {
+    $('#svl').focus();
+    const go = async () => {
+      const label = $('#svl').value; closeModal();
+      const r = await api.save(DB, label); if (r && r.templates) adoptNos(r); setDirty(false);
+      toast('已儲存範本設定' + (r && r.tag ? `（${r.tag}${r.label ? ' ' + r.label : ''}）` : '，並建立一個版本')); if (tab === 'edit' && !ed) drawEd();
+    };
+    $('#svs').onclick = go; $('#svl').onkeydown = e => { if (e.key === 'Enter') go(); };
+  }, '<button class="b" id="svs">儲存</button>');
+}
+$('#save').onclick = askSave;
 
 /* ---------- 對話框 ---------- */
 function openModal(title, html, onOpen, act = '') {
@@ -185,9 +216,9 @@ function drawList() {
         `<button class="ic" data-a="be" data-ci="${ci}" data-bi="${bi}" title="編輯內容（僅本文件）" aria-label="編輯區塊">✎</button>` +
         `<button class="ic x" data-a="bx" data-ci="${ci}" data-bi="${bi}" title="從本文件移除區塊" aria-label="移除區塊">✕</button></div>`).join('')
         : '<div class="empty">沒有區塊：可把區塊拖到這裡，或按 ＋ 新增</div>') + '</div>';
-  }).join('') || (mk ? '<p class="mut">尚無章節，請按「＋章節」。</p>' : '<p class="mut">請先在上方「範本」選單選擇範本，或選擇「空文件」從空白開始。</p>');
+  }).join('') || (mk === BLANK ? '<div class="emptybox"><p class="mut" style="margin-top:0">空文件還沒有內容，從這裡開始：</p><div class="row"><button class="b" data-e="lib">從區塊庫選區塊</button><button class="b g" data-e="ch">＋新增章節</button></div></div>' : mk ? '<p class="mut">尚無章節，請按「＋章節」。</p>' : '<p class="mut">請先在上方「範本」選單選擇範本，或選擇「空文件」從空白開始。</p>');
   ['wcadd', 'wreset', 'hitsel', 'all'].forEach(id => $('#' + id).disabled = !mk);
-  drawRfpInfo();
+  drawRfpInfo(); updFlow();
   $('#list').querySelectorAll('[data-part]').forEach(i => i.indeterminate = true);
 }
 const L = $('#list');
@@ -198,7 +229,12 @@ L.onchange = e => {
     if (i.dataset.cc != null) W[i.dataset.cc].blocks.forEach(b => i.checked ? sel.add(b.id) : sel.delete(b.id));
   }, false);
 };
+function startChapter(fromLib) {                       // 空文件：建立第一個章節；從區塊庫開始時直接開啟選擇視窗
+  if (!touch()) return; W.push({ id: uid(), title: '新章節', blocks: [] }); wTouched = true; drawList(); gen(true);
+  const ci = W.length - 1; fromLib ? openAdd(ci) : openChapterEdit(ci);
+}
 L.onclick = e => {
+  const q = e.target.closest('[data-e]'); if (q) return startChapter(q.dataset.e === 'lib');
   const el = e.target.closest('[data-a]'); if (!el) return;
   const a = el.dataset.a, ci = +el.dataset.ci, bi = el.dataset.bi == null ? null : +el.dataset.bi, c = W[ci];
   if (a === 'ba') return openAdd(ci);
@@ -266,7 +302,11 @@ function openAdd(ci) {
     draw(); $('#aq').oninput = draw; $('#ag').onchange = draw;
     $('#al').onclick = e => {
       const lb = DB.library.find(x => x.id === e.target.dataset.id); if (!lb) return;
-      if (addBlock(ci, { title: lb.title, content: lb.content, keywords: [...(lb.keywords || [])] }) != null) toast(`已插入「${lb.title}」`);
+      if (addBlock(ci, { title: lb.title, content: lb.content, keywords: [...(lb.keywords || [])] }) != null) {
+        const c = W[ci];                                   // 新建的空章節沿用區塊庫分類的章節名（「範本｜章節」→「章節」）
+        if (c.title === '新章節' && c.blocks.length === 1 && lb.group && lb.group.includes('｜')) { c.title = lb.group.split('｜').pop(); drawList(); gen(true); }
+        toast(`已插入「${lb.title}」`);
+      }
     };
     $('#an').onclick = () => { const bi = addBlock(ci, { title: '新區塊', content: '' }); if (bi != null) openBlockEdit(ci, bi); };
   });
@@ -294,7 +334,7 @@ $('#wreset').onclick = () => {
   sel.clear(); manual = false; wTouched = false; syncW(); drawList(); gen(true); toast('已從範本重新載入');
 };
 $('#rfp').oninput = drawList;
-$('#hitsel').onclick = () => { const hs = hitBlocks(); if (!hs.length) return toast(rfpInfo().text.trim() ? 'RFP 沒有比對到範本的章節或區塊' : '請先貼上 RFP 內容'); mutate(() => hs.forEach(b => sel.add(b.id)), false); toast(`已勾選 ${hs.length} 個區塊`); };
+$('#hitsel').onclick = openHitPreview;
 $('#rfpinfo').onclick = e => { if (e.target.id === 'rfpex') { $('#rfp').value = RFP_EX; drawList(); } };
 $('#all').onclick = () => mutate(() => W.forEach(c => c.blocks.forEach(b => sel.add(b.id))), false);
 $('#none').onclick = () => mutate(() => sel.clear(), false);
@@ -351,18 +391,25 @@ $('#oimg').onclick = async () => {
 const guideSeen = () => { try { return localStorage.getItem('pb.guide') === '1'; } catch { return true; } };
 const guideDismiss = () => { try { localStorage.setItem('pb.guide', '1'); } catch {} };
 let flowSig = '';
+const totalBlocks = () => W.reduce((n, c) => n + c.blocks.length, 0);
 function flowSteps() {
   const s1 = !!mk && !!(M.案名 || '').trim(), s2 = sel.size > 0, s3 = pvSeen || manual, saved = !!docId && lastSaved === $('#out').value, s4 = saved;
+  const hasRfp = !!rfpInfo().text.trim(), hb = mk && hasRfp ? hitPlan() : [], hn = hb.reduce((n, x) => n + x.blocks.length, 0);
+  const total = totalBlocks(), badge = mk && total ? `（${sel.size}／${total}）` : '';
+  const pick = !mk ? { h: '先選擇範本或空文件', b: '選擇範本', go: () => $('#mtsel').focus() }
+    : !total ? { h: '新增章節，或從區塊庫挑選區塊', b: '從區塊庫選', go: () => startChapter(true) }
+    : hasRfp && hn ? { h: `RFP 命中 ${hb.length} 章、${hn} 個區塊，確認後勾選`, b: '預覽命中清單', go: openHitPreview }
+    : { h: hasRfp ? 'RFP 沒有命中項目，請手動勾選' : '貼上 RFP 讓系統標示相關區塊，或直接勾選／全選', b: hasRfp ? '全選' : '貼上 RFP', go: () => hasRfp ? $('#all').click() : $('#rfp').focus() };
   return [
     { t: '基本資料', d: s1, h: s1 ? '' : (!mk ? '先選擇範本（或選「空文件」）並填寫案名' : '先填寫案名（也建議填機關與公司）'), b: !mk ? '選擇範本' : '填寫案名', go: () => (!mk ? $('#mtsel') : $('[data-m=案名]')).focus() },
-    { t: '選擇內容', d: s2, h: s2 ? '' : '貼上 RFP 讓系統標示相關區塊，或直接勾選／全選', b: '貼上 RFP', go: () => $('#rfp').focus() },
+    { t: '選擇內容' + badge, d: s2, ...pick, hit: hn },
     { t: '檢查微調', d: s3, h: '預覽成果；可拖曳調整順序、直接修改右側文字、插入圖片', b: '預覽', go: () => setPv(true) },
     { t: '儲存匯出', d: s4, h: docId && !saved ? '有尚未儲存的修改' : '存入文件庫，再匯出 Word', b: '儲存到文件庫', go: () => saveDoc(false) }
   ];
 }
 function updFlow() {
   const el = $('#flow'); if (!el) return;
-  const st = flowSteps(), cur = st.findIndex(x => !x.d), welcome = !guideSeen(), sig = JSON.stringify([st.map(x => x.d), cur, welcome, sel.size, docId, isDirty && 0]);
+  const st = flowSteps(), cur = st.findIndex(x => !x.d), welcome = !guideSeen(), sig = JSON.stringify([st.map(x => x.d + x.t + x.h), cur, welcome, sel.size, docId]);
   if (sig === flowSig) return; flowSig = sig;
   el.innerHTML = `<ol>${st.map((x, i) => `<li><button class="stp${x.d ? ' done' : i === cur ? ' cur' : ''}" data-i="${i}"${i === cur ? ' aria-current="step"' : ''}>${x.d ? '✓' : i + 1} ${x.t}</button></li>`).join('')}</ol>` +
     `<div class="nx">${cur < 0 ? '<span>✓ 已完成，可匯出 Word，或到「文件庫」管理。</span><button class="b" data-x="exp">匯出 Word</button>' : `<span>下一步：${esc(st[cur].h)}</span><button class="b" data-x="next">${esc(st[cur].b)}</button>`}</div>` +

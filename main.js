@@ -41,16 +41,17 @@ async function tagMap() {                                // 完整 commit hash �
   }
   return m;
 }
-async function tagRef(ref, label = '') { const t = await nextTag(); await git(...IDENT, 'tag', '-a', t, '-m', label, ref); return t; }
+const cleanLabel = l => String(l || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+async function tagRef(ref, label = '') { label = cleanLabel(label); const t = await nextTag(); await git(...IDENT, 'tag', '-a', t, '-m', label, ref); return t; }
 async function backfillTags() {                          // 舊資料（升級前的版本）補上編號，依時間由舊到新
   const o = await git('rev-list', '--reverse', 'HEAD'); if (!o) return;
   const have = await tagMap();
   for (const h of o.split('\n').filter(Boolean)) if (!have.has(h)) await tagRef(h);
 }
-const commit = msg => enqueue(async () => {
-  if (!hasGit()) return;
+const commit = (msg, label = '') => enqueue(async () => {       // 回傳新版本的 Tag 編號（沒有新版本則為空字串）
+  if (!hasGit()) return '';
   await git('add', '-A');
-  if ((await git(...IDENT, 'commit', '-m', msg)) !== null) await tagRef('HEAD');
+  return (await git(...IDENT, 'commit', '-m', msg)) !== null ? await tagRef('HEAD', label) : '';
 });
 // ---- 版本歷史：檢視 git 紀錄、查看差異、還原範本 / 文件、找回已刪除文件 ----
 const REF = /^[0-9a-f]{4,40}\^?$/, HASH = /^[0-9a-f]{4,40}$/;
@@ -175,7 +176,7 @@ const fmtDate = iso => { const d = new Date(iso); const p = n => String(n).padSt
 const stamp = () => new Date().toLocaleString('zh-TW', { hour12: false });
 
 ipcMain.handle('load', () => read());
-ipcMain.handle('save', async (e, d) => { write(d); await commit('更新範本 ' + stamp()); return { templates: d.templates, library: d.library }; });   // 回傳補上編號的資料，介面端沿用同一組檔名
+ipcMain.handle('save', async (e, d, label) => { write(d); const tag = await commit('更新範本 ' + stamp(), label); return { templates: d.templates, library: d.library, tag, label: cleanLabel(label) }; });   // 回傳補上編號的資料，介面端沿用同一組檔名
 ipcMain.handle('reset', async () => { const old = read(), d = defaults(); d.wordStyles = old.wordStyles; d.defaultWordStyle = old.defaultWordStyle; write(d); await commit('還原為內建預設範本'); return d; }); // 保留使用者的 Word 格式範本
 ipcMain.handle('log', async () => {
   const o = await gq('log', '-n', '40', '--pretty=format:%h\t%aI\t%H\t%s', '--', 'templates.json', 'templates/', 'library/');
@@ -193,7 +194,7 @@ ipcMain.handle('restore', async (e, hash) => {
 // 設定版本 Tag 的名稱（空字串 = 清除名稱，Tag 編號保留）
 ipcMain.handle('tagSet', (e, hash, label) => {
   if (!HASH.test(hash)) return null;
-  label = String(label || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+  label = cleanLabel(label);
   return enqueue(async () => {
     const full = ((await git('rev-parse', '--verify', hash + '^{commit}')) || '').trim(); if (!full) return null;
     const cur = (await tagMap()).get(full);

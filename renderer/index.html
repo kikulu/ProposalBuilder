@@ -154,6 +154,12 @@ dl.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:8px 0;font
 #rfp::placeholder{color:#9aa3a3;font-size:12.5px;line-height:1.5}
 .vt{display:inline-block;font:11px/1 ui-monospace,Consolas,monospace;padding:2px 5px;border-radius:3px;background:#e8eeee;color:#345;margin-right:4px;vertical-align:1px}
 .vl{display:inline-block;font-size:11px;padding:2px 6px;border-radius:9px;background:#fff1c9;color:#7a5a00;margin-right:4px;vertical-align:1px}
+/* 範本選單：固定在頁面頂端，手機捲動或叫出鍵盤時仍看得到 */
+.tplbar{position:sticky;top:0;z-index:3;display:flex;align-items:center;gap:8px 10px;flex-wrap:wrap;background:#fff;border:1px solid var(--ln);border-radius:6px;padding:6px 12px}
+.tplbar label{margin:0;font-weight:600;color:var(--ink);white-space:nowrap}.tplbar select{width:auto;flex:1 1 200px;max-width:420px}
+.hp .hc{margin-top:10px;font-weight:600}.hp .hb{display:flex;gap:8px;align-items:flex-start;padding:4px 0 4px 18px;margin:0}.hp .hb small{display:block;color:var(--mut)}
+.emptybox{border:1px dashed var(--ln);border-radius:6px;padding:14px;text-align:center}.emptybox .row{justify-content:center}
+@media (max-width:820px){.tplbar{top:var(--hh);margin-bottom:10px}}
 </style>
 </head>
 <body>
@@ -172,10 +178,10 @@ dl.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:8px 0;font
 <nav id="snav" aria-label="次要導覽" hidden></nav>
 
 <main id="make">
+  <div class="tplbar" style="grid-column:1/-1"><label for="mtsel">範本</label><select id="mtsel" aria-label="選擇範本"></select><span class="mut" id="tplsum"></span></div>
   <div id="flow" class="flow" style="grid-column:1/-1" aria-label="製作進度"></div>
   <section>
-    <h2>範本與基本資料</h2>
-    <label>範本<select id="mtsel" aria-label="選擇範本"></select></label>
+    <h2>基本資料</h2>
     <label>案名<input type="text" data-m="案名"></label>
     <label>招標機關 / 客戶<input type="text" data-m="機關"></label>
     <label>提案公司<input type="text" data-m="公司"></label>
@@ -183,7 +189,7 @@ dl.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:8px 0;font
     <label for="rfp">貼上 RFP 內容（比對到的章節／區塊會標示「RFP」）</label>
     <textarea id="rfp" rows="12" spellcheck="false" placeholder="貼上 RFP 需求章節，參考格式：&#10;【只有大項】&#10;一、專案背景與目標&#10;二、系統功能需求&#10;三、系統架構與資安&#10;【大項＋子標題】&#10;二、系統功能需求&#10;  （一）會員管理&#10;  （二）報表查詢&#10;三、系統架構與資安&#10;  1. 雲端部署&#10;  2. 個資保護"></textarea>
     <p class="mut" id="rfpinfo">尚未貼上 RFP。只有大項時以「章節」為單位標示；有子標題時以「區塊」為單位標示。<button class="lk" id="rfpex" type="button">填入範例</button></p>
-    <div class="row"><button class="b g" id="hitsel">勾選 RFP 命中項目</button><button class="b g" id="all">全選</button><button class="b g" id="none">清除</button></div>
+    <div class="row"><button class="b g" id="hitsel" title="先預覽命中的章節／區塊，確認後再勾選">預覽命中清單</button><button class="b g" id="all">全選</button><button class="b g" id="none">清除</button></div>
     <h2>章節與區塊</h2>
     <div class="row" style="margin-top:0"><button class="b g" id="wcadd">＋章節</button><button class="b g" id="wreset">從範本重新載入</button></div>
     <p class="mut">拖曳 ⠿ 或按 ▲▼ 調整順序（區塊可拖到其他章節）；＋ 新增區塊、✎ 修改內容。這裡的調整只影響本文件，不會改動範本。</p>
