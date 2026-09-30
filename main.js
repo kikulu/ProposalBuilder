@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, clipboard, shell, nativeImage } = require('electron');
-const fs = require('fs'), path = require('path'), { execFile } = require('child_process');
+const fs = require('fs'), path = require('path'), { execFile, spawn } = require('child_process');
 const { mdToDocx } = require('./mdToDocx');
+const store = require('./store');
 
 const defaults = () => JSON.parse(JSON.stringify(require('./defaults')));
 let win, dir, file, imgDir, attDir, defImg, defAtt, docDir, settingsFile, idxFile, settings = {}, settingsWarn = '';
@@ -8,7 +9,8 @@ let win, dir, file, imgDir, attDir, defImg, defAtt, docDir, settingsFile, idxFil
 // ---- 資料與 git 版本控管（範本資料存於使用者資料夾 /data，自帶獨立 git repo）----
 const git = (...a) => new Promise(r => execFile('git', a, { cwd: dir, maxBuffer: 20e6 }, (e, o) => r(e ? null : o)));
 const read = () => {
-  const d = JSON.parse(fs.readFileSync(file, 'utf8')), df = defaults();
+  const d = store.readStore(dir), df = defaults();
+  if (d._legacy) { store.writeStore(dir, d); commit('範本拆分為 Markdown 區塊檔（JSON 索引 + 編號資料夾）'); }   // 舊版把內文放在 templates.json，第一次讀取時自動轉換
   d.library = d.library || df.library;
   if ((d.libSeed || 0) < df.libSeed) {                       // 補入內建區塊（以 標題+內容 比對，不重複）；只做一次
     const have = new Set(d.library.map(b => b.title + '\u0000' + b.content)), ids = new Set(d.library.map(b => b.id));
@@ -19,48 +21,108 @@ const read = () => {
   if (!d.wordStyles.some(x => x.id === d.defaultWordStyle)) d.defaultWordStyle = d.wordStyles[0].id;
   return d;
 };
-const write = d => fs.writeFileSync(file, JSON.stringify(d, null, 2));
+const write = d => store.writeStore(dir, d);          // 索引檔 templates.json + templates/T001/C01/B0001.md …
 const hasGit = () => fs.existsSync(path.join(dir, '.git'));
 let commitQ = Promise.resolve();
-const commit = msg => (commitQ = commitQ.then(async () => {
+const enqueue = fn => (commitQ = commitQ.then(fn).catch(() => {}));
+const IDENT = ['-c', 'user.name=ProposalBuilder', '-c', 'user.email=pb@local'];
+// ---- 版本 Tag：每個版本自動編號 v0001、v0002…（附註標籤）；標籤的「說明文字」= 使用者為此版本取的名稱 ----
+const TAGRE = /^v\d{4,}$/;
+async function nextTag() {
+  const o = (await git('tag', '-l', 'v[0-9]*')) || '';
+  return 'v' + String(Math.max(0, ...o.split('\n').filter(x => TAGRE.test(x)).map(x => +x.slice(1))) + 1).padStart(4, '0');
+}
+async function tagMap() {                                // 完整 commit hash → { tag, label }
+  const o = await gq('for-each-ref', 'refs/tags', '--format=%(refname:short)%09%(objecttype)%09%(objectname)%09%(*objectname)%09%(contents:subject)');
+  const m = new Map(); if (!o) return m;
+  for (const l of o.split('\n').filter(Boolean)) {
+    const [name, type, obj, target, label] = l.split('\t'); if (!TAGRE.test(name)) continue;
+    const h = type === 'tag' ? target : obj; if (h && !m.has(h)) m.set(h, { tag: name, label: type === 'tag' ? (label || '') : '' });
+  }
+  return m;
+}
+async function tagRef(ref, label = '') { const t = await nextTag(); await git(...IDENT, 'tag', '-a', t, '-m', label, ref); return t; }
+async function backfillTags() {                          // 舊資料（升級前的版本）補上編號，依時間由舊到新
+  const o = await git('rev-list', '--reverse', 'HEAD'); if (!o) return;
+  const have = await tagMap();
+  for (const h of o.split('\n').filter(Boolean)) if (!have.has(h)) await tagRef(h);
+}
+const commit = msg => enqueue(async () => {
   if (!hasGit()) return;
   await git('add', '-A');
-  await git('-c', 'user.name=ProposalBuilder', '-c', 'user.email=pb@local', 'commit', '-m', msg);
-}).catch(() => {}));
+  if ((await git(...IDENT, 'commit', '-m', msg)) !== null) await tagRef('HEAD');
+});
 // ---- 版本歷史：檢視 git 紀錄、查看差異、還原範本 / 文件、找回已刪除文件 ----
 const REF = /^[0-9a-f]{4,40}\^?$/, HASH = /^[0-9a-f]{4,40}$/;
 const okHPath = p => typeof p === 'string' && (p === 'templates.json' || p === 'files-index.json' || /^documents\/[\w-]+\.json$/.test(p));
 const gq = (...a) => git('-c', 'core.quotepath=false', ...a);
-const PRETTY = '--pretty=format:%x1e%h%x1f%aI%x1f%s';
+const PRETTY = '--pretty=format:%x1e%h%x1f%aI%x1f%H%x1f%s';
 const parseCommits = o => o.split('\x1e').filter(b => b.trim()).map(b => {
-  const [head, ...rest] = b.split('\n'), [h, d, ...sub] = head.split('\x1f');
-  return { h, d, s: sub.join('\x1f'), files: rest.filter(l => l.trim()).map(l => { const [st, ...pp] = l.split('\t'); return { s: st[0], p: pp.join('\t') }; }) };
+  const [head, ...rest] = b.split('\n'), [h, d, H, ...sub] = head.split('\x1f');
+  return { h, H, d, s: sub.join('\x1f'), files: rest.filter(l => l.trim()).map(l => { const [st, ...pp] = l.split('\t'); return { s: st[0], p: pp.join('\t') }; }) };
 });
-const kindOf = p => p === 'templates.json' ? 'tpl' : /^documents\//.test(p) ? 'doc' : p === 'files-index.json' ? 'idx' : /^images\//.test(p) ? 'img' : 'other';
+const kindOf = p => p === 'templates.json' || /^(templates|library)\//.test(p) ? 'tpl' : /^documents\//.test(p) ? 'doc' : p === 'files-index.json' ? 'idx' : /^images\//.test(p) ? 'img' : 'other';
 const blob = async (ref, p) => (REF.test(ref) && okHPath(p)) ? await gq('show', `${ref}:${p}`) : null;
+// 一次讀出某版本的多個檔案（git cat-file --batch，只開一個程序）
+const gitBatch = (ref, paths) => new Promise(res => {
+  const p = spawn('git', ['cat-file', '--batch'], { cwd: dir }), chunks = [];
+  p.on('error', () => res(null)); p.stdout.on('data', c => chunks.push(c));
+  p.on('close', () => {
+    const buf = Buffer.concat(chunks), out = {}; let pos = 0;
+    for (const f of paths) {
+      const nl = buf.indexOf(10, pos); if (nl < 0) break;
+      const head = buf.slice(pos, nl).toString(), m = head.match(/^\S+ blob (\d+)$/); pos = nl + 1;
+      if (!m) { out[f] = null; continue; }
+      const len = +m[1]; out[f] = buf.slice(pos, pos + len).toString('utf8'); pos += len + 1;
+    }
+    res(out);
+  });
+  p.stdin.end(paths.map(f => `${ref}:${f}\n`).join(''));
+});
+// 某個版本的完整範本資料：新格式依索引 + md 組回；舊格式（內文內嵌）直接回傳
+async function tplAt(ref) {
+  if (!REF.test(ref)) return null;
+  const t = await gq('show', `${ref}:templates.json`); if (!t) return null;
+  let idx; try { idx = JSON.parse(t); } catch { return null; }
+  if (!store.isIndexed(idx)) return idx;
+  const files = [...idx.templates.flatMap(x => x.chapters.flatMap(c => c.blocks.map(b => b.file))), ...(idx.library || []).map(b => b.file)];
+  const got = await gitBatch(ref, files); if (!got) return null;
+  return store.assemble(idx, f => got[f]);
+}
 const titleAt = async (ref, p) => { try { return JSON.parse(await blob(ref, p)).title || ''; } catch { return ''; } };
 ipcMain.handle('historyInfo', async () => ({ enabled: hasGit() && (await git('--version')) !== null }));
 ipcMain.handle('historyList', async (e, o = {}) => {
   const skip = Math.max(0, parseInt(o.skip) || 0), limit = Math.min(100, Math.max(1, parseInt(o.limit) || 40));
-  const paths = { tpl: ['templates.json'], doc: ['documents/'], file: ['files-index.json', 'images/'] }[o.kind] || [];
-  const a = ['log', '--no-renames', '--name-status', PRETTY, '-n', String(limit + 1), '--skip', String(skip)];
-  if (o.q) a.push('--fixed-strings', '-i', '--grep=' + String(o.q).slice(0, 100));
+  const paths = { tpl: ['templates.json', 'templates/', 'library/'], doc: ['documents/'], file: ['files-index.json', 'images/'] }[o.kind] || [];
+  const q = String(o.q || '').trim().slice(0, 100).toLowerCase();
+  const a = ['log', '--no-renames', '--name-status', PRETTY];
+  if (!q) a.push('-n', String(limit + 1), '--skip', String(skip)); else a.push('-n', '1000');
   const out = await gq(...a, '--', ...paths); if (out === null) return null;
-  const all = parseCommits(out), more = all.length > limit;
-  return { items: all.slice(0, limit).map(c => ({ h: c.h, d: c.d, s: c.s, n: c.files.length, tpl: c.files.some(f => f.p === 'templates.json'), docs: c.files.filter(f => kindOf(f.p) === 'doc').length, files: c.files.filter(f => ['img', 'idx'].includes(kindOf(f.p))).length })), more };
+  const tags = await tagMap();
+  let all = parseCommits(out).map(c => ({ ...c, ...(tags.get(c.H) || {}) }));
+  if (q) all = all.filter(c => (c.s + ' ' + (c.tag || '') + ' ' + (c.label || '')).toLowerCase().includes(q)).slice(skip);   // 搜尋範圍：說明、Tag 編號、Tag 名稱
+  const more = all.length > limit;
+  return { items: all.slice(0, limit).map(c => ({ h: c.h, d: c.d, s: c.s, tag: c.tag || '', label: c.label || '', n: c.files.length, tpl: c.files.some(f => kindOf(f.p) === 'tpl'), docs: c.files.filter(f => kindOf(f.p) === 'doc').length, files: c.files.filter(f => ['img', 'idx'].includes(kindOf(f.p))).length })), more };
 });
 ipcMain.handle('historyShow', async (e, hash) => {
   if (!HASH.test(hash)) return null;
   const out = await gq('show', '--no-renames', '--name-status', PRETTY, hash); if (out === null) return null;
   const c = parseCommits(out)[0]; if (!c) return null;
+  const tg = (await tagMap()).get(c.H) || {}; c.tag = tg.tag || ''; c.label = tg.label || '';
+  const tplF = c.files.filter(f => kindOf(f.p) === 'tpl');                    // 範本被拆成很多 md 檔：在介面上合併成一筆「範本、區塊庫與 Word 格式」
+  if (tplF.length) c.files = [{ s: tplF.some(f => f.p === 'templates.json' && f.s === 'A') && tplF.length === 1 ? 'A' : 'M', p: 'templates.json', n: tplF.length }, ...c.files.filter(f => kindOf(f.p) !== 'tpl')];
   c.files = await Promise.all(c.files.map(async f => { const k = kindOf(f.p); return { ...f, k, title: k === 'doc' ? await titleAt(f.s === 'D' ? hash + '^' : hash, f.p) : '' }; }));
   return c;
 });
-ipcMain.handle('historyBlob', async (e, ref, p) => { const t = await blob(ref, p); return t === null || t.length > 4e6 ? null : t; });     // 差異由介面端計算
+ipcMain.handle('historyBlob', async (e, ref, p) => {
+  const t = p === 'templates.json' ? (d => d ? JSON.stringify(d) : null)(await tplAt(ref)) : await blob(ref, p);
+  return t === null || t.length > 4e6 ? null : t;
+});     // 差異由介面端計算
 ipcMain.handle('docHistory', async (e, id) => {
   if (!okId(id)) return [];
   const o = await gq('log', '--no-renames', '-n', '100', PRETTY, '--', `documents/${id}.json`);
-  return o === null ? [] : parseCommits(o).map(c => ({ h: c.h, d: c.d, s: c.s }));
+  const tags = await tagMap();
+  return o === null ? [] : parseCommits(o).map(c => ({ h: c.h, d: c.d, s: c.s, tag: (tags.get(c.H) || {}).tag || '', label: (tags.get(c.H) || {}).label || '' }));
 });
 ipcMain.handle('docRestore', async (e, ref, id) => {
   if (!REF.test(ref) || !okId(id)) return null;
@@ -104,24 +166,40 @@ async function initData() {
   const gi = path.join(dir, '.gitignore');                 // 附件可能很大，預設資料夾不納入 git
   if (!fs.existsSync(gi)) fs.writeFileSync(gi, 'attachments/\n');
   if (!fs.existsSync(file)) write(defaults());
+  const ga = path.join(dir, '.gitattributes');              // Markdown 一律 LF，跨 Windows / macOS 不會因換行被判成整檔變更
+  if (!fs.existsSync(ga)) fs.writeFileSync(ga, '*.md text eol=lf\n*.json text eol=lf\n');
   if (!hasGit() && (await git('--version'))) { await git('init'); await commit('初始化內建範本（軟體開發案、維護案）'); }
+  else if (hasGit()) await enqueue(backfillTags);           // 升級前的舊版本補上 Tag 編號
 }
+const fmtDate = iso => { const d = new Date(iso); const p = n => String(n).padStart(2, '0'); return isNaN(d) ? '' : `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
 const stamp = () => new Date().toLocaleString('zh-TW', { hour12: false });
 
 ipcMain.handle('load', () => read());
-ipcMain.handle('save', async (e, d) => { write(d); await commit('更新範本 ' + stamp()); return true; });
+ipcMain.handle('save', async (e, d) => { write(d); await commit('更新範本 ' + stamp()); return { templates: d.templates, library: d.library }; });   // 回傳補上編號的資料，介面端沿用同一組檔名
 ipcMain.handle('reset', async () => { const old = read(), d = defaults(); d.wordStyles = old.wordStyles; d.defaultWordStyle = old.defaultWordStyle; write(d); await commit('還原為內建預設範本'); return d; }); // 保留使用者的 Word 格式範本
 ipcMain.handle('log', async () => {
-  const o = await git('log', '-n', '40', '--date=format:%Y-%m-%d %H:%M', '--pretty=format:%h\t%ad\t%s', '--', 'templates.json');
-  return o === null ? null : o.split('\n').filter(Boolean).map(l => { const [h, d, ...s] = l.split('\t'); return { h, d, s: s.join('\t') }; });
+  const o = await gq('log', '-n', '40', '--pretty=format:%h\t%aI\t%H\t%s', '--', 'templates.json', 'templates/', 'library/');
+  if (o === null) return null;
+  const tags = await tagMap();
+  return o.split('\n').filter(Boolean).map(l => { const [h, d, H, ...s] = l.split('\t'), t = tags.get(H) || {}; return { h, d: fmtDate(d), s: s.join('\t'), tag: t.tag || '', label: t.label || '' }; });
 });
 ipcMain.handle('restore', async (e, hash) => {
-  if (!/^[0-9a-f]{4,40}\^?$/.test(hash)) return null;                  // 允許 <hash>^：還原到該次變更「之前」
-  const o = await git('show', `${hash}:templates.json`);
-  if (!o) return null;
-  fs.writeFileSync(file, o);
+  if (!REF.test(hash)) return null;                                   // 允許 <hash>^：還原到該次變更「之前」
+  const d = await tplAt(hash); if (!d || !Array.isArray(d.templates)) return null;
+  write(d);                                                          // 依該版本內容重寫索引與 md，並清掉多餘的 md
   await commit('還原至版本 ' + hash.replace('^', '（變更前）'));
   return read();
+});
+// 設定版本 Tag 的名稱（空字串 = 清除名稱，Tag 編號保留）
+ipcMain.handle('tagSet', (e, hash, label) => {
+  if (!HASH.test(hash)) return null;
+  label = String(label || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+  return enqueue(async () => {
+    const full = ((await git('rev-parse', '--verify', hash + '^{commit}')) || '').trim(); if (!full) return null;
+    const cur = (await tagMap()).get(full);
+    if (cur) await git(...IDENT, 'tag', '-f', '-a', cur.tag, '-m', label, full); else await tagRef(full, label);
+    return (await tagMap()).get(full) || null;
+  });
 });
 
 // ---- 匯出 / 匯入 ----

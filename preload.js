@@ -7,7 +7,7 @@ contextBridge.exposeInMainWorld('api', {
   settingsGet: call('settingsGet'), settingsSet: call('settingsSet'), pickDir: call('pickDir'), openDir: call('openDir'),
   fileList: call('fileList'), fileAdd: call('fileAdd'), fileOpen: call('fileOpen'), fileReveal: call('fileReveal'),
   fileSaveAs: call('fileSaveAs'), fileRename: call('fileRename'), fileDelete: call('fileDelete'), fileUsage: call('fileUsage'),
-  historyInfo: call('historyInfo'), historyList: call('historyList'), historyShow: call('historyShow'), historyBlob: call('historyBlob'),
+  historyInfo: call('historyInfo'), tagSet: call('tagSet'), historyList: call('historyList'), historyShow: call('historyShow'), historyBlob: call('historyBlob'),
   docHistory: call('docHistory'), docRestore: call('docRestore'), docsDeleted: call('docsDeleted'),
   docDeleteMany: call('docDeleteMany'), docDuplicate: call('docDuplicate'), docMetaMany: call('docMetaMany'), docSearch: call('docSearch'),
   docExportMany: call('docExportMany'), docBackup: call('docBackup'), docImport: call('docImport'),

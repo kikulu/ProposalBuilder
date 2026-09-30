@@ -6,15 +6,61 @@ const kw = s => s.split(/[,，、]/).map(x => x.trim()).filter(Boolean);
 const clone = o => JSON.parse(JSON.stringify(o));
 const TABS = ['make', 'edit', 'lib', 'docs', 'wst', 'files', 'hist', 'set'];
 let DB, cur, ed = null, sel = new Set(), libId = null, tab = 'make';
+let mk = '';                                       // 「製作」頁選用的範本：'' = 尚未選擇、BLANK = 空文件、其餘為範本 id；與「範本」分頁正在編輯的 cur 各自獨立
+const BLANK = '__blank';
 let pvSeen = false, lastSaved = null, isDirty = false;   // 進度列與儲存狀態用
 let W = [], wTpl = null, wTouched = false;           // 本文件的章節/區塊（由範本複製，可自由調整，不影響範本）
 let manual = false, docId = null, docTitle = '', pvOn = false;   // manual：右側文字已手動修改
 let DOCS = [], vDoc = null, vEdit = false, wsId = null;
 const M = { 案名: '', 機關: '', 公司: '', 日期: new Date().toISOString().slice(0, 10) };
-const T = () => DB.templates.find(t => t.id === cur);
+const T = () => DB.templates.find(t => t.id === cur);   // 範本分頁正在編輯的範本
+const MT = () => mk && mk !== BLANK ? DB.templates.find(t => t.id === mk) : null;
+const mkName = () => mk === BLANK ? '空文件' : MT() ? MT().name : '（未選範本）';
+function fixSel() {                                       // DB 被整份取代（還原／匯入）後，確認兩個選擇仍然有效
+  if (!DB.templates.some(x => x.id === cur)) cur = DB.templates[0].id;
+  if (mk && mk !== BLANK && !DB.templates.some(x => x.id === mk)) { mk = ''; newSession(); }
+}
 const toast = m => { const t = $('#toast'); t.textContent = m; t.classList.add('on'); clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove('on'), 2400); };
 const dirty = () => setDirty(true);
-const hit = b => { const r = $('#rfp').value; return r && (b.keywords || []).some(k => k && r.includes(k)); };
+/* RFP 結構偵測：有的 RFP 只有大項（一、二、…），有的還有子標題（（一）、1.1、1)…）。
+   只有大項 → 以章節為單位比對；有子標題 → 以區塊為單位比對。 */
+const RL1 = /^\s*(?:第[一二三四五六七八九十百零\d]+[章節條]|[一二三四五六七八九十百壹貳參肆伍陸柒捌玖拾]+[、．.]|\d+[、．.](?!\d)|[A-Z][、．.])\s*(.+)$/;
+const RL2 = /^\s*(?:[（(][一二三四五六七八九十\d]+[）)]|\d+\.\d+(?:\.\d+)*|\d+[)）]|[a-z][)）.])\s*(.+)$/;
+let rfpMemo = { t: null, v: null };
+function rfpInfo() {
+  const t = $('#rfp').value; if (rfpMemo.t === t) return rfpMemo.v;
+  const items = []; let m;
+  t.replace(/\r/g, '').split('\n').forEach(line => {
+    if (!line.trim()) return;
+    const indent = line.match(/^\s*/)[0].length;
+    if ((m = line.match(RL2))) items.push({ lv: 2, title: m[1].trim() });
+    else if ((m = line.match(RL1))) items.push({ lv: indent >= 2 && items.some(x => x.lv === 1) ? 2 : 1, title: m[1].trim() });
+  });
+  rfpMemo = { t, v: { text: t, items, n1: items.filter(x => x.lv === 1).length, n2: items.filter(x => x.lv === 2).length } };
+  return rfpMemo.v;
+}
+const same = (a, b) => a.length >= 2 && b.length >= 2 && (a.includes(b) || b.includes(a));
+const hit = b => { const r = rfpInfo().text; return !!r && ((b.keywords || []).some(k => k && r.includes(k)) || (b.title.length >= 2 && r.includes(b.title))); };
+const chTitleHit = c => rfpInfo().items.some(x => same(x.title, c.title));      // RFP 的大項名稱與章節名稱相符
+const chHit = c => chTitleHit(c) || c.blocks.some(hit);
+// 依 RFP 結構決定要勾選哪些區塊：只有大項 → 章節相符者整章勾選；有子標題 → 只勾命中的區塊（章節相符但沒有區塊命中時才整章勾選）
+function hitBlocks() {
+  const info = rfpInfo(), out = [];
+  W.forEach(c => {
+    const hs = c.blocks.filter(hit), byTitle = chTitleHit(c);
+    if (byTitle && (!info.n2 || !hs.length)) out.push(...c.blocks); else out.push(...hs);
+  });
+  return out;
+}
+function drawRfpInfo() {
+  const i = rfpInfo(), p = $('#rfpinfo');
+  const msg = !i.text.trim() ? '尚未貼上 RFP。只有大項時以「章節」為單位標示；有子標題時以「區塊」為單位標示。'
+    : !i.n1 && !i.n2 ? '未偵測到大項編號（一、／1.／第一章），改以關鍵字比對區塊。'
+    : i.n2 ? `偵測到 ${i.n1} 個大項、${i.n2} 個子標題 → 以區塊為單位標示。` : `偵測到 ${i.n1} 個大項（無子標題）→ 以章節為單位標示，命中的章節會整章勾選。`;
+  const n = W.filter(chHit).length;
+  p.innerHTML = esc(msg + (i.text.trim() && mk ? `（命中 ${n} 個章節）` : '')) + (i.text.trim() ? '' : '<button class="lk" id="rfpex" type="button">填入範例</button>');
+}
+const RFP_EX = '一、專案背景與目標\n二、系統功能需求\n  （一）會員管理\n  （二）報表查詢與匯出\n三、系統架構與資安\n  1. 雲端部署與備援\n  2. 個資保護與資安檢測\n四、教育訓練與維運';
 const fresh = t => { t.id = uid(); t.chapters.forEach(c => { c.id = uid(); c.blocks.forEach(b => b.id = uid()); }); return t; };
 const pad = n => String(n).padStart(2, '0');
 const fmt = iso => { const d = new Date(iso); return isNaN(d) ? '' : `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
@@ -31,28 +77,33 @@ const okDiscard = () => !(wTouched || manual) || confirm('這會捨棄「製作�
 const newSession = () => { sel.clear(); docId = null; docTitle = ''; manual = false; wTouched = false; lastSaved = null; pvSeen = false; };
 
 async function init() {
-  DB = await api.load(); cur = DB.templates[0].id; wsId = DB.defaultWordStyle;
+  DB = await api.load(); cur = DB.templates[0].id; mk = ''; wsId = DB.defaultWordStyle;
   document.querySelectorAll('[data-m]').forEach(i => { i.value = M[i.dataset.m]; i.oninput = () => { M[i.dataset.m] = i.value; gen(); }; });
   drawSel(); drawWsel(); refresh(); drawNav(); syncSave(); updFlow();
 }
-function drawSel() { $('#tsel').innerHTML = DB.templates.map(t => `<option value="${t.id}"${t.id === cur ? ' selected' : ''}>${esc(t.name)}</option>`).join(''); }
+function drawSel() {                                   // 「製作」與「範本」各有自己的選單
+  const opts = sel => DB.templates.map(t => `<option value="${t.id}"${t.id === sel ? ' selected' : ''}>${esc(t.name)}</option>`).join('');
+  $('#mtsel').innerHTML = `<option value="" disabled${mk === '' ? ' selected' : ''}>選擇範本</option><option value="${BLANK}"${mk === BLANK ? ' selected' : ''}>空文件（不套用範本）</option>` + opts(mk);
+  $('#etsel').innerHTML = opts(cur);
+}
 function drawWsel() {
   const o = DB.wordStyles.map(s => `<option value="${s.id}"${s.id === DB.defaultWordStyle ? ' selected' : ''}>${esc(s.name)}</option>`).join('');
   $('#wsel').innerHTML = o; const d = $('#dws'); if (d) d.innerHTML = o;
 }
 function syncW() {                                    // 沒有手動調整過時，隨範本更新；調整過就保留
-  const t = T(); if (!t || (wTpl === cur && wTouched)) return;
-  W = clone(t.chapters); wTpl = cur; wTouched = false;
+  if (wTpl === mk && wTouched) return;
+  const t = MT(); W = t ? clone(t.chapters) : []; wTpl = mk; wTouched = false;   // 空文件／未選範本：從空白開始
 }
 function refresh() {
   if (tab === 'make') { syncW(); drawList(); gen(); }
   if (tab === 'edit') { drawTree(); drawEd(); }
   if (tab === 'lib') drawLib();
 }
-$('#tsel').onchange = e => {
-  if (!okDiscard()) { e.target.value = cur; return; }
-  cur = e.target.value; newSession(); ed = null; refresh();
+$('#mtsel').onchange = e => {
+  if (!okDiscard()) { drawSel(); return; }
+  mk = e.target.value; newSession(); refresh();
 };
+$('#etsel').onchange = e => { cur = e.target.value; ed = null; refresh(); };
 /* ---------- 導覽：主導覽 4 群組 + 次導覽；儲存狀態 ---------- */
 const GROUPS = [
   { g: 'make', tabs: [['make', '製作建議書']] },
@@ -80,7 +131,6 @@ function drawNav() {
 function setTab(t) {
   tab = t; lastIn[groupOf(t).g] = t;
   TABS.forEach(id => $('#' + id).hidden = id !== t);
-  $('#tsel').hidden = !['make', 'edit', 'lib'].includes(t);
   drawNav(); syncSave();
   refresh(); if (t === 'docs') loadDocs(); if (t === 'wst') drawWs(); if (t === 'files') loadFiles(); if (t === 'hist') drawHist(); if (t === 'set') drawSet();
 }
@@ -96,7 +146,13 @@ document.addEventListener('keydown', e => {                       // Ctrl/⌘+S�
   if (!((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's')) return; e.preventDefault();
   if (tab === 'make') saveDoc(false); else if (isDirty) $('#save').click(); else toast('沒有需要儲存的變更');
 });
-$('#save').onclick = async () => { await api.save(DB); setDirty(false); toast('已儲存範本設定，並建立一個版本'); if (tab === 'edit' && !ed) drawEd(); };
+// 儲存後把主程式補上的檔案編號帶回來，下次儲存沿用同一組檔名
+function adoptNos(src) {
+  const by = (l, id) => (l || []).find(x => x.id === id);
+  DB.templates.forEach(t => { const s = by(src.templates, t.id); if (!s) return; t.no = s.no; t.chapters.forEach(c => { const sc = by(s.chapters, c.id); if (!sc) return; c.no = sc.no; c.blocks.forEach(b => { const sb = by(sc.blocks, b.id); if (sb) b.no = sb.no; }); }); });
+  DB.library.forEach(b => { const s = by(src.library, b.id); if (s) b.no = s.no; });
+}
+$('#save').onclick = async () => { const r = await api.save(DB); if (r && r.templates) adoptNos(r); setDirty(false); toast('已儲存範本設定，並建立一個版本'); if (tab === 'edit' && !ed) drawEd(); };
 
 /* ---------- 對話框 ---------- */
 function openModal(title, html, onOpen, act = '') {
@@ -118,7 +174,7 @@ function drawList() {
     const n = c.blocks.filter(b => sel.has(b.id)).length, all = n && n === c.blocks.length;
     return `<div class="ch" data-ci="${ci}"><div class="hd" draggable="true" data-dt="c" data-ci="${ci}">` +
       `<span class="grip" title="拖曳調整章節順序" aria-hidden="true">⠿</span>` +
-      `<label class="lb"><input type="checkbox" data-cc="${ci}" ${all ? 'checked' : ''} ${n && !all ? 'data-part="1"' : ''}><span>${esc(c.title)}</span></label>` +
+      `<label class="lb"><input type="checkbox" data-cc="${ci}" ${all ? 'checked' : ''} ${n && !all ? 'data-part="1"' : ''}><span>${esc(c.title)}${chHit(c) ? ' <span class="tag">RFP</span>' : ''}</span></label>` +
       `<button class="ic" data-a="cu" data-ci="${ci}" title="章節上移" aria-label="章節上移">▲</button><button class="ic" data-a="cd" data-ci="${ci}" title="章節下移" aria-label="章節下移">▼</button>` +
       `<button class="ic" data-a="ba" data-ci="${ci}" title="新增區塊" aria-label="新增區塊">＋</button><button class="ic" data-a="ce" data-ci="${ci}" title="修改章節名稱" aria-label="修改章節名稱">✎</button>` +
       `<button class="ic x" data-a="cx" data-ci="${ci}" title="從本文件移除章節" aria-label="移除章節">✕</button></div>` +
@@ -129,7 +185,9 @@ function drawList() {
         `<button class="ic" data-a="be" data-ci="${ci}" data-bi="${bi}" title="編輯內容（僅本文件）" aria-label="編輯區塊">✎</button>` +
         `<button class="ic x" data-a="bx" data-ci="${ci}" data-bi="${bi}" title="從本文件移除區塊" aria-label="移除區塊">✕</button></div>`).join('')
         : '<div class="empty">沒有區塊：可把區塊拖到這裡，或按 ＋ 新增</div>') + '</div>';
-  }).join('') || '<p class="mut">尚無章節，請按「＋章節」。</p>';
+  }).join('') || (mk ? '<p class="mut">尚無章節，請按「＋章節」。</p>' : '<p class="mut">請先在上方「範本」選單選擇範本，或選擇「空文件」從空白開始。</p>');
+  ['wcadd', 'wreset', 'hitsel', 'all'].forEach(id => $('#' + id).disabled = !mk);
+  drawRfpInfo();
   $('#list').querySelectorAll('[data-part]').forEach(i => i.indeterminate = true);
 }
 const L = $('#list');
@@ -236,7 +294,8 @@ $('#wreset').onclick = () => {
   sel.clear(); manual = false; wTouched = false; syncW(); drawList(); gen(true); toast('已從範本重新載入');
 };
 $('#rfp').oninput = drawList;
-$('#hitsel').onclick = () => mutate(() => W.forEach(c => c.blocks.forEach(b => hit(b) && sel.add(b.id))), false);
+$('#hitsel').onclick = () => { const hs = hitBlocks(); if (!hs.length) return toast(rfpInfo().text.trim() ? 'RFP 沒有比對到範本的章節或區塊' : '請先貼上 RFP 內容'); mutate(() => hs.forEach(b => sel.add(b.id)), false); toast(`已勾選 ${hs.length} 個區塊`); };
+$('#rfpinfo').onclick = e => { if (e.target.id === 'rfpex') { $('#rfp').value = RFP_EX; drawList(); } };
 $('#all').onclick = () => mutate(() => W.forEach(c => c.blocks.forEach(b => sel.add(b.id))), false);
 $('#none').onclick = () => mutate(() => sel.clear(), false);
 
@@ -293,9 +352,9 @@ const guideSeen = () => { try { return localStorage.getItem('pb.guide') === '1';
 const guideDismiss = () => { try { localStorage.setItem('pb.guide', '1'); } catch {} };
 let flowSig = '';
 function flowSteps() {
-  const s1 = !!(M.案名 || '').trim(), s2 = sel.size > 0, s3 = pvSeen || manual, saved = !!docId && lastSaved === $('#out').value, s4 = saved;
+  const s1 = !!mk && !!(M.案名 || '').trim(), s2 = sel.size > 0, s3 = pvSeen || manual, saved = !!docId && lastSaved === $('#out').value, s4 = saved;
   return [
-    { t: '基本資料', d: s1, h: s1 ? '' : '先填寫案名（也建議填機關與公司）', b: '填寫案名', go: () => $('[data-m=案名]').focus() },
+    { t: '基本資料', d: s1, h: s1 ? '' : (!mk ? '先選擇範本（或選「空文件」）並填寫案名' : '先填寫案名（也建議填機關與公司）'), b: !mk ? '選擇範本' : '填寫案名', go: () => (!mk ? $('#mtsel') : $('[data-m=案名]')).focus() },
     { t: '選擇內容', d: s2, h: s2 ? '' : '貼上 RFP 讓系統標示相關區塊，或直接勾選／全選', b: '貼上 RFP', go: () => $('#rfp').focus() },
     { t: '檢查微調', d: s3, h: '預覽成果；可拖曳調整順序、直接修改右側文字、插入圖片', b: '預覽', go: () => setPv(true) },
     { t: '儲存匯出', d: s4, h: docId && !saved ? '有尚未儲存的修改' : '存入文件庫，再匯出 Word', b: '儲存到文件庫', go: () => saveDoc(false) }
@@ -323,7 +382,7 @@ function openGuide() {
   guideDismiss(); flowSig = ''; updFlow();
   openModal('使用流程', `<div class="gd">
     <h2>① 製作一份建議書</h2><ol>
-      ${it('1. 填基本資料', '選好範本，填案名、機關、公司；可貼上 RFP，命中關鍵字的區塊會標示「RFP」。', 'make', '開始製作')}
+      ${it('1. 填基本資料', '在「製作」頁選擇範本（或空文件），填案名、機關、公司；可貼上 RFP（大項或含子標題皆可），比對到的章節／區塊會標示「RFP」。', 'make', '開始製作')}
       ${it('2. 選擇內容', '勾選章節與區塊；拖曳 ⠿ 或按 ▲▼ 調整順序，＋ 新增區塊。調整只影響這一份文件。', '')}
       ${it('3. 檢查與微調', '預覽成果，右側文字可直接修改，也能插入圖片。', '')}
       ${it('4. 儲存與匯出', '「儲存到文件庫」保留整份文件（之後可再修改），再選 Word 格式匯出。', '')}</ol>
@@ -404,8 +463,8 @@ const optHtml = (list, cur) => list.map(v => `<option value="${esc(v)}"${v === c
 /* ---------- 文件庫 ---------- */
 async function saveDoc(asNew) {
   const r = await api.docSave({
-    id: asNew ? null : docId, title: M.案名 || '未命名建議書', tpl: T().name, md: $('#out').value,
-    meta: { M: { ...M }, rfp: $('#rfp').value, sel: [...sel], chapters: W, tplId: cur }
+    id: asNew ? null : docId, title: M.案名 || '未命名建議書', tpl: mkName(), md: $('#out').value,
+    meta: { M: { ...M }, rfp: $('#rfp').value, sel: [...sel], chapters: W, tplId: mk }
   });
   docId = r.id; docTitle = r.title; lastSaved = $('#out').value; updInfo(); toast(asNew ? '已另存為新文件' : '已儲存到文件庫');
 }
@@ -414,11 +473,11 @@ $('#dsaveas').onclick = () => saveDoc(true);
 async function openDoc(id) {
   const d = vDoc && vDoc.id === id ? vDoc : await api.docGet(id); if (!d) return toast('找不到此文件');
   if ((wTouched || manual) && !confirm('載入文件會取代「製作建議書」目前編輯中的內容。確定嗎？')) return;
-  const m = d.meta || {}, t = DB.templates.find(x => x.id === m.tplId) || DB.templates.find(x => x.name === d.tpl) || DB.templates[0];
-  cur = t.id; drawSel();
+  const m = d.meta || {}, t = DB.templates.find(x => x.id === m.tplId) || DB.templates.find(x => x.name === d.tpl);
+  mk = t ? t.id : BLANK; drawSel();                  // 找不到原範本（已刪除）或當初就是空文件：以空文件方式保留文件內的章節
   Object.assign(M, m.M || {}); document.querySelectorAll('[data-m]').forEach(i => i.value = M[i.dataset.m] || '');
   $('#rfp').value = m.rfp || '';
-  if (Array.isArray(m.chapters)) { W = clone(m.chapters); wTpl = cur; wTouched = true; } else { wTouched = false; wTpl = null; syncW(); }
+  if (Array.isArray(m.chapters)) { W = clone(m.chapters); wTpl = mk; wTouched = true; } else { wTouched = false; wTpl = null; syncW(); }
   sel = new Set(m.sel || []); docId = d.id; docTitle = d.title;
   setTab('make');
   $('#out').value = d.md; lastSaved = d.md; pvSeen = true; manual = d.md !== buildMd();     // 與依設定產生的結果不同，代表存檔前有手動修改
@@ -482,7 +541,7 @@ $('#dimp').onclick = async () => {
 async function openDocHistory(id) {
   const vs = await api.docHistory(id); if (!vs || !vs.length) return toast('沒有版本紀錄（可能未安裝 git）');
   openModal('文件版本歷史', `<p class="mut">每次儲存都會留下一個版本。還原會建立新版本，不會刪除任何紀錄。</p><div id="vhl">${vs.map((v, i) =>
-    `<div class="fl"><span class="nm">${esc(fmt(v.d))}　${esc(v.s)}${i === 0 ? ' <span class="chip g">最新</span>' : ''}</span><button class="b g" data-a="pv" data-i="${i}">預覽</button>${i < vs.length - 1 ? `<button class="b g" data-a="df" data-i="${i}">與上一版差異</button>` : ''}${i > 0 ? `<button class="b g" data-a="dc" data-i="${i}">與目前差異</button><button class="b" data-a="rs" data-i="${i}">還原</button>` : ''}</div>`).join('')}</div><div id="vhv"></div>`, () => {
+    `<div class="fl"><span class="nm">${tagChips(v)}${esc(fmt(v.d))}　${esc(v.s)}${i === 0 ? ' <span class="chip g">最新</span>' : ''}</span><button class="b g" data-a="pv" data-i="${i}">預覽</button>${i < vs.length - 1 ? `<button class="b g" data-a="df" data-i="${i}">與上一版差異</button>` : ''}${i > 0 ? `<button class="b g" data-a="dc" data-i="${i}">與目前差異</button><button class="b" data-a="rs" data-i="${i}">還原</button>` : ''}</div>`).join('')}</div><div id="vhv"></div>`, () => {
     const get = async h => { try { return JSON.parse(await api.historyBlob(h, `documents/${id}.json`)); } catch { return null; } };
     $('#vhl').onclick = async e => {
       const b = e.target.closest('[data-a]'); if (!b) return; const i = +b.dataset.i, v = vs[i], a = b.dataset.a, out = $('#vhv');
@@ -546,21 +605,20 @@ async function drawEd() {
     $('#texp').onclick = async () => { const p = await api.exportJson(t.name, { templates: [t] }); if (p) toast('已匯出：' + p); };
     $('#texpall').onclick = async () => { const p = await api.exportJson('全部範本', DB); if (p) toast('已匯出：' + p); };
     $('#timp').onclick = async () => {
-      const d = await api.importJson(); if (!d) return; if (!okDiscard()) return;
+      const d = await api.importJson(); if (!d) return;
       const ts = d.templates || (d.chapters ? [d] : null);
       if (!ts) return toast('檔案格式不正確');
       ts.forEach(x => DB.templates.push(fresh(x)));
       (d.library || []).forEach(b => DB.library.push({ ...b, id: uid() }));
-      cur = DB.templates[DB.templates.length - 1].id; newSession(); dirty(); drawSel(); refresh(); toast(`已匯入 ${ts.length} 個範本，記得按「儲存」`);
+      cur = DB.templates[DB.templates.length - 1].id; ed = null; dirty(); drawSel(); refresh(); toast(`已匯入 ${ts.length} 個範本，記得按「儲存」`);
     };
     const l = await api.log(), h = $('#tplhist'); if (!h) return;
     h.innerHTML = l === null ? '<p class="mut">未偵測到 git，無法使用版本紀錄。</p>' : !l.length ? '<p class="mut">尚無版本。</p>'
-      : l.map(x => `<div class="hv"><span>${esc(x.d)}　${esc(x.s)}</span><button class="b g" data-h="${x.h}">還原</button></div>`).join('');
+      : l.map(x => `<div class="hv"><span>${tagChips(x)}${esc(x.d)}　${esc(x.s)}</span><button class="b g" data-h="${x.h}">還原</button></div>`).join('');
     h.onclick = async e => {
       const hh = e.target.dataset.h; if (!hh || !confirm('還原到此版本？目前未儲存的變更會遺失。')) return;
-      if (!okDiscard()) return; const d = await api.restore(hh); if (!d) return toast('還原失敗');
-      DB = d; if (!DB.templates.some(x => x.id === cur)) cur = DB.templates[0].id;
-      newSession(); ed = null; setDirty(false); drawSel(); refresh(); toast('已還原');
+      const d = await api.restore(hh); if (!d) return toast('還原失敗');
+      DB = d; fixSel(); ed = null; setDirty(false); drawSel(); refresh(); toast('已還原');
     };
     return;
   }
@@ -600,19 +658,20 @@ $('#tree').onclick = e => {
   drawTree(); drawEd();
 };
 $('#cadd').onclick = () => { const t = T(); t.chapters.push({ id: uid(), title: '新章節', blocks: [] }); ed = { c: t.chapters.length - 1, b: null }; dirty(); drawTree(); drawEd(); };
-$('#tnew').onclick = () => { if (!okDiscard()) return; const t = { id: uid(), name: '新範本', chapters: [] }; DB.templates.push(t); cur = t.id; ed = null; newSession(); dirty(); drawSel(); refresh(); };
-$('#tcopy').onclick = () => { if (!okDiscard()) return;
-  const t = fresh(JSON.parse(JSON.stringify(T()))); t.name += '（副本）';
-  DB.templates.push(t); cur = t.id; ed = null; newSession(); dirty(); drawSel(); refresh();
+$('#tnew').onclick = () => { const t = { id: uid(), name: '新範本', chapters: [] }; DB.templates.push(t); cur = t.id; ed = null; dirty(); drawSel(); refresh(); };
+$('#tcopy').onclick = () => {
+  const t = fresh(JSON.parse(JSON.stringify(T()))); delete t.no; t.chapters.forEach(c => { delete c.no; c.blocks.forEach(b => delete b.no); }); t.name += '（副本）';   // 副本重新編號，不與原範本共用檔案
+  DB.templates.push(t); cur = t.id; ed = null; dirty(); drawSel(); refresh();
 };
-$('#tdel').onclick = () => { if (!okDiscard()) return;
+$('#tdel').onclick = () => {
   if (DB.templates.length < 2) return toast('至少保留一個範本');
   if (!confirm(`刪除範本「${T().name}」？`)) return;
-  DB.templates = DB.templates.filter(t => t.id !== cur); cur = DB.templates[0].id; ed = null; newSession(); dirty(); drawSel(); refresh();
+  if (mk === cur) { if (!okDiscard()) return; mk = ''; newSession(); }             // 「製作」頁正在用這個範本：改回「選擇範本」
+  DB.templates = DB.templates.filter(t => t.id !== cur); cur = DB.templates[0].id; ed = null; dirty(); drawSel(); refresh();
 };
 $('#reset').onclick = async () => {
-  if (!confirm('將所有範本與區塊庫還原為內建預設？自訂內容會被覆蓋（仍可從版本紀錄還原）。Word 格式範本不受影響。') || !okDiscard()) return;
-  DB = await api.reset(); cur = DB.templates[0].id; ed = null; newSession(); setDirty(false); drawSel(); refresh(); toast('已還原預設');
+  if (!confirm('將所有範本與區塊庫還原為內建預設？自訂內容會被覆蓋（仍可從版本紀錄還原）。Word 格式範本不受影響。')) return;
+  DB = await api.reset(); cur = DB.templates[0].id; fixSel(); ed = null; setDirty(false); drawSel(); refresh(); toast('已還原預設');
 };
 
 /* ---------- 區塊庫 ---------- */
@@ -629,15 +688,18 @@ function drawLibEd() {
     <label>分類<input type="text" id="l0" list="lgl" value="${esc(b.group || '')}" placeholder="例如：自訂"></label><datalist id="lgl">${[...new Set(DB.library.map(x => x.group).filter(Boolean))].map(g => `<option value="${esc(g)}">`).join('')}</datalist>
     <label>RFP 關鍵字（以逗號分隔）<input type="text" id="l2" value="${esc((b.keywords || []).join(','))}"></label>
     <label>內文（Markdown）<textarea id="l3" rows="14">${esc(b.content)}</textarea></label>
-    <div class="row"><select id="l4" style="width:auto">${T().chapters.map((c, i) => `<option value="${i}">${esc(c.title)}</option>`).join('')}</select>
-    <button class="b g" id="l5">插入到「${esc(T().name)}」此章節</button><button class="b d" id="l6">刪除區塊</button></div>`;
+    <div class="row"><select id="l4t" aria-label="範本" style="width:auto">${DB.templates.map(t => `<option value="${t.id}"${t.id === cur ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select>
+    <select id="l4" aria-label="章節" style="width:auto"></select>
+    <button class="b g" id="l5">插入此章節</button><button class="b d" id="l6">刪除區塊</button></div>`;
+  const fillCh = () => { const t = DB.templates.find(x => x.id === $('#l4t').value); $('#l4').innerHTML = t && t.chapters.length ? t.chapters.map((c, i) => `<option value="${i}">${esc(c.title)}</option>`).join('') : '<option value="">（此範本尚無章節）</option>'; };
+  fillCh(); $('#l4t').onchange = fillCh;
   $('#l1').oninput = e => { b.title = e.target.value; drawLibList(); dirty(); };
   $('#l0').onchange = e => { b.group = e.target.value.trim(); dirty(); drawLib(); };
   $('#l2').oninput = e => { b.keywords = kw(e.target.value); dirty(); };
   $('#l3').oninput = e => { b.content = e.target.value; dirty(); };
   $('#l5').onclick = () => {
-    const c = T().chapters[+$('#l4').value]; if (!c) return toast('此範本尚無章節');
-    c.blocks.push({ id: uid(), title: b.title, content: b.content, keywords: [...(b.keywords || [])] }); dirty(); toast(`已插入「${c.title}」`); drawList();
+    const t = DB.templates.find(x => x.id === $('#l4t').value), c = t && t.chapters[+$('#l4').value]; if (!c) return toast('此範本尚無章節');
+    c.blocks.push({ id: uid(), title: b.title, content: b.content, keywords: [...(b.keywords || [])] }); dirty(); toast(`已插入「${t.name}｜${c.title}」`); if (tab === 'make') drawList();
   };
   $('#l6').onclick = () => { if (!confirm('刪除此共用區塊？（已插入範本的內容不受影響）')) return; DB.library = DB.library.filter(x => x !== b); libId = null; dirty(); drawLib(); };
 }
@@ -822,7 +884,18 @@ async function drawFileView() {
   });
 }
 
-/* ---------- 版本歷史（git） ---------- */
+/* ---------- 版本歷史（git）與版本 Tag ---------- */
+const tagChips = x => (x.tag ? `<span class="vt" title="版本 Tag">${esc(x.tag)}</span>` : '') + (x.label ? `<span class="vl" title="版本名稱">${esc(x.label)}</span>` : '');
+function editTag(x, done) {                                    // 為版本取名（附註 Tag 的說明文字）；留空 = 清除名稱
+  openModal(`版本名稱（${x.tag || x.h}）`, `<p class="mut">Tag 編號 ${esc(x.tag || '—')} 由系統自動編排；這裡可以替此版本取一個容易辨識的名稱，例如「投標版定稿」，之後可在版本歷史搜尋。</p>
+    <label>版本名稱<input type="text" id="tgl" maxlength="60" value="${esc(x.label || '')}" placeholder="例如：投標版定稿"></label>
+    <div class="row"><button class="b" id="tgs">儲存</button><button class="b g" id="tgc">取消</button></div>`, () => {
+    $('#tgl').focus(); $('#tgl').select();
+    const save = async () => { const r = await api.tagSet(x.h, $('#tgl').value); if (!r) return toast('無法設定版本名稱'); x.tag = r.tag; x.label = r.label; closeModal(); toast(r.label ? `已命名：${r.label}` : '已清除版本名稱'); if (done) done(r); };
+    $('#tgs').onclick = save; $('#tgc').onclick = closeModal; $('#tgl').onkeydown = e => { if (e.key === 'Enter') save(); };
+  });
+}
+
 let HL = [], HMORE = false, HSEL = null, HDEL = [], hqT;
 async function drawHist() {
   const info = await api.historyInfo();
@@ -846,7 +919,7 @@ function drawHistList() {
     $('#hlist').innerHTML = HDEL.filter(x => !q || x.title.toLowerCase().includes(q)).map(x => `<div class="cm${HSEL && HSEL.del === x.id ? ' on' : ''}" data-del="${x.id}" tabindex="0"><b>${esc(x.title)}</b><small>刪除於 ${esc(fmt(x.d))}</small></div>`).join('') || '<p class="mut">沒有可找回的已刪除文件。</p>';
     return;
   }
-  $('#hlist').innerHTML = HL.map(x => `<div class="cm${HSEL && HSEL.h === x.h ? ' on' : ''}" data-h="${x.h}" tabindex="0"><b>${esc(x.s)}</b><small>${esc(fmt(x.d))} ・ ${x.h}${x.tpl ? ' ・ 範本' : ''}${x.docs ? ` ・ ${x.docs} 份文件` : ''}${x.files ? ` ・ ${x.files} 個檔案` : ''}</small></div>`).join('')
+  $('#hlist').innerHTML = HL.map(x => `<div class="cm${HSEL && HSEL.h === x.h ? ' on' : ''}" data-h="${x.h}" tabindex="0"><b>${tagChips(x)}${esc(x.s)}</b><small>${esc(fmt(x.d))} ・ ${x.h}${x.tpl ? ' ・ 範本' : ''}${x.docs ? ` ・ ${x.docs} 份文件` : ''}${x.files ? ` ・ ${x.files} 個檔案` : ''}</small></div>`).join('')
     + (HMORE ? '<div class="row"><button class="b g" id="hmore">載入更多</button></div>' : '') || '<p class="mut">沒有符合的紀錄。</p>';
 }
 const pickHist = r => { if (!r) return; if (r.dataset.del) showDeleted(r.dataset.del); else if (r.dataset.h) showCommit(r.dataset.h); };
@@ -859,12 +932,14 @@ async function showCommit(h) {
   HSEL = { h }; drawHistList(); const c = await api.historyShow(h), box = $('#hview');
   if (!c) { box.innerHTML = '<p class="mut">無法讀取此版本。</p>'; return; }
   const lab = { A: '新增', M: '修改', D: '刪除' };
-  box.innerHTML = `<h2>${esc(c.s)}</h2><p class="mut">${esc(fmt(c.d))} ・ 版本 ${c.h}</p>` +
+  box.innerHTML = `<h2>${tagChips(c)}${esc(c.s)}</h2><p class="mut">${esc(fmt(c.d))} ・ 版本 ${c.h}${c.tag ? ' ・ Tag ' + esc(c.tag) : ''} <button class="lk" data-a="tag" type="button">${c.label ? '修改版本名稱' : '＋ 為此版本命名'}</button></p>` +
     (c.files.map((f, i) => `<div class="fl"><span class="st ${f.s}">${lab[f.s] || f.s}</span><span class="nm">${fileLabel(f)}</span>` +
       (f.k === 'doc' ? `<button class="b g" data-a="pv" data-i="${i}">預覽</button><button class="b g" data-a="df" data-i="${i}">差異</button><button class="b" data-a="rs" data-i="${i}">${f.s === 'D' ? '找回此文件' : '還原到此版本'}</button>${f.s === 'M' ? `<button class="b g" data-a="rb" data-i="${i}" title="還原成這次儲存之前的內容">還原到變更前</button>` : ''}`
         : f.k === 'tpl' && f.s !== 'D' ? `<button class="b g" data-a="df" data-i="${i}">差異摘要</button><button class="b" data-a="rs" data-i="${i}">還原到此版本</button>${f.s === 'M' ? `<button class="b g" data-a="rb" data-i="${i}" title="還原成這次儲存之前的狀態">還原到變更前</button>` : ''}` : '') + '</div>').join('') || '<p class="mut">此版本沒有檔案變更。</p>') + '<div id="hdiff"></div>';
   box.onclick = async e => {
-    const b = e.target.closest('[data-a]'); if (!b) return; const f = c.files[+b.dataset.i], a = b.dataset.a, out = $('#hdiff'), after = f.s !== 'D' ? c.h : null, before = f.s !== 'A' ? c.h + '^' : null;
+    const b = e.target.closest('[data-a]'); if (!b) return;
+    if (b.dataset.a === 'tag') return editTag(c, () => { const x = HL.find(y => y.h === c.h); if (x) { x.tag = c.tag; x.label = c.label; } drawHistList(); showCommit(c.h); });
+    const f = c.files[+b.dataset.i], a = b.dataset.a, out = $('#hdiff'), after = f.s !== 'D' ? c.h : null, before = f.s !== 'A' ? c.h + '^' : null;
     const get = async ref => ref ? api.historyBlob(ref, f.p) : null, json = async ref => { try { return JSON.parse(await get(ref)); } catch { return null; } };
     if (f.k === 'doc') {
       const id = f.p.replace(/^documents\//, '').replace(/\.json$/, '');
@@ -879,9 +954,9 @@ async function showCommit(h) {
     } else if (f.k === 'tpl') {
       if (a === 'df') out.innerHTML = tplDiffView(await get(before), await get(after));
       else if (a === 'rs' || a === 'rb') {
-        if (!confirm(`把範本、區塊庫與 Word 格式還原到${a === 'rb' ? '這次變更之前' : '這個版本（含這次變更）'}的狀態？\n目前未儲存的變更會遺失。`) || !okDiscard()) return;
+        if (!confirm(`把範本、區塊庫與 Word 格式還原到${a === 'rb' ? '這次變更之前' : '這個版本（含這次變更）'}的狀態？\n目前未儲存的變更會遺失。`)) return;
         const d = await api.restore(a === 'rb' ? before : c.h); if (!d) return toast('還原失敗');
-        DB = d; if (!DB.templates.some(x => x.id === cur)) cur = DB.templates[0].id; wsId = DB.defaultWordStyle; newSession(); ed = null; setDirty(false); drawSel(); drawWsel(); toast('已還原範本');
+        DB = d; fixSel(); wsId = DB.defaultWordStyle; ed = null; setDirty(false); drawSel(); drawWsel(); toast('已還原範本');
       }
     }
   };
