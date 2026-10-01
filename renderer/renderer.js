@@ -22,23 +22,48 @@ function fixSel() {                                       // DB 被整份取代�
 }
 const toast = m => { const t = $('#toast'); t.textContent = m; t.classList.add('on'); clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove('on'), 2400); };
 const dirty = () => setDirty(true);
-/* RFP 結構偵測：有的 RFP 只有大項（一、二、…），有的還有子標題（（一）、1.1、1)…）。
-   只有大項 → 以章節為單位比對；有子標題 → 以區塊為單位比對。 */
-const RL1 = /^\s*(?:第[一二三四五六七八九十百零\d]+[章節條]|[一二三四五六七八九十百壹貳參肆伍陸柒捌玖拾]+[、．.]|\d+[、．.](?!\d)|[A-Z][、．.])\s*(.+)$/;
-const RL2 = /^\s*(?:[（(][一二三四五六七八九十\d]+[）)]|\d+\.\d+(?:\.\d+)*|\d+[)）]|[a-z][)）.])\s*(.+)$/;
-let rfpMemo = { t: null, v: null };
-function rfpInfo() {
+/* ---------- RFP 目錄解析（大項 / 子標題）：命中標示與「依 RFP 目錄建立章節」共用同一套解析 ---------- */
+const CN = '一二三四五六七八九十百零〇兩壹貳參叄肆伍陸柒捌玖拾';
+const R3 = [/^\d+(?:\.\d+){2,}[\s、.:：)）]*(.*)$/, /^#{3,}\s*(.*)$/];
+const R2 = [new RegExp('^[（(]\\s*[' + CN + ']+\\s*[）)]\\s*[、.:：]?\\s*(.*)$'), /^\d+\.\d+(?!\.?\d)[\s、.:：)）]*(.*)$/, /^[（(]\s*\d+\s*[）)]\s*(.*)$/, /^\d+[)）]\s*(.*)$/, /^##\s*(.*)$/, /^[a-z][.)）、]\s*(.*)$/, /^\d+-\d+[\s、.:：]+(.*)$/];
+const R1 = [new RegExp('^第\\s*[' + CN + '\\d]+\\s*[章節部分篇項]\\s*[、.:：]?\\s*(.*)$'), new RegExp('^[' + CN + ']+\\s*[、.．]\\s*(.*)$'), /^\d{1,2}(?:[、．]|\.(?!\d))\s*(.*)$/, /^[A-Z][、.．)）]\s*(.*)$/, /^#\s*(.*)$/, /^[■●◆▲★]\s*(.*)$/];
+function classifyRfp(raw) {
+  const t = raw.trim(); if (!t) return null;
+  const indent = raw.match(/^[ \t\u3000]*/)[0].replace(/\t/g, '    ').replace(/\u3000/g, '  ').length;
+  for (const [lv, list] of [[3, R3], [2, R2], [1, R1]]) for (const r of list) { const m = t.match(r); if (m) return { lv, title: (m[1] || '').trim(), indent }; }
+  return { lv: 0, title: t.replace(/^[-*•·]\s+/, ''), indent };
+}
+function splitTitle(t) {                                     // 長句（常見於編號的條款）：取前段當標題，其餘當說明
+  t = t.replace(/[。；;，,：:\s]+$/, ''); if (t.length <= 28) return { title: t, rest: '' };
+  const m = t.slice(0, 40).search(/[：:，,。；;]/);
+  return m > 1 ? { title: t.slice(0, m), rest: t.slice(m + 1).trim() } : { title: t.slice(0, 28) + '…', rest: t };
+}
+function parseRfp(text, loose = true) {   // loose=false：只認有編號的行（命中標示用）；loose=true：沒有編號時，短行也當標題（建立章節用）
+  const rows = String(text || '').replace(/\r/g, '').split('\n').map(classifyRfp).filter(Boolean), items = [];
+  let curI = null, curS = null;
+  const desc = t => { const g = curS || curI; if (g && t) g.desc += (g.desc ? '\n' : '') + t; };
+  const newItem = t => { const x = splitTitle(t); if (!x.title) return false; curI = { title: x.title, full: t, desc: x.rest, subs: [] }; curS = null; items.push(curI); return true; };
+  const newSub = t => { const x = splitTitle(t); if (!x.title) return; if (!curI) newItem('（未分類）'); curS = { title: x.title, full: t, desc: x.rest }; curI.subs.push(curS); };
+  if (rows.some(r => r.lv > 0)) {
+    const minLv = Math.min(...rows.filter(r => r.lv > 0).map(r => r.lv));
+    rows.forEach(r => { if (r.lv > 0) r.lv -= minLv - 1; });          // 沒有最高層的編號時，把現有最高層視為大項
+    let base = null;
+    rows.forEach(r => { if (r.lv === 1) { if (base === null) base = r.indent; else if (r.indent >= base + 2) r.lv = 2; } });   // 同一種編號靠縮排表示子層
+    rows.forEach(r => { if (r.lv === 1) newItem(r.title); else if (r.lv === 2) newSub(r.title); else desc(r.title); });
+  } else if (loose) {                                               // 完全沒有編號：短行當標題，縮排的當子標題，長行當說明
+    const base = Math.min(...rows.map(r => r.indent));
+    rows.forEach(r => { if (r.title.length > 40) desc(r.title); else if (r.indent >= base + 2 && curI) newSub(r.title); else newItem(r.title); });
+  }
+  return { items, l1: items.length, l2: items.reduce((n, i) => n + i.subs.length, 0) };
+}
+let rfpMemo = { t: null, v: null }, rfpTree = { t: null, p: null };
+function rfpInfo() {                                  // 命中標示用：只認有編號的行
   const t = $('#rfp').value; if (rfpMemo.t === t) return rfpMemo.v;
-  const items = []; let m;
-  t.replace(/\r/g, '').split('\n').forEach(line => {
-    if (!line.trim()) return;
-    const indent = line.match(/^\s*/)[0].length;
-    if ((m = line.match(RL2))) items.push({ lv: 2, title: m[1].trim() });
-    else if ((m = line.match(RL1))) items.push({ lv: indent >= 2 && items.some(x => x.lv === 1) ? 2 : 1, title: m[1].trim() });
-  });
-  rfpMemo = { t, v: { text: t, items, n1: items.filter(x => x.lv === 1).length, n2: items.filter(x => x.lv === 2).length } };
+  const p = parseRfp(t, false), items = p.items.flatMap(i => [{ lv: 1, title: i.full }, ...i.subs.map(s => ({ lv: 2, title: s.full }))]);
+  rfpMemo = { t, v: { text: t, items, n1: p.l1, n2: p.l2 } };
   return rfpMemo.v;
 }
+const rfpOutline = () => { const t = $('#rfp').value; if (rfpTree.t !== t) rfpTree = { t, p: parseRfp(t, true) }; return rfpTree.p; };   // 建立章節用：寬鬆解析
 const same = (a, b) => a.length >= 2 && b.length >= 2 && (a.includes(b) || b.includes(a));
 const hit = b => { const r = rfpInfo().text; return !!r && ((b.keywords || []).some(k => k && r.includes(k)) || (b.title.length >= 2 && r.includes(b.title))); };
 const chTitleHit = c => rfpInfo().items.some(x => same(x.title, c.title));      // RFP 的大項名稱與章節名稱相符
@@ -113,7 +138,7 @@ function syncW() {                                    // 沒有手動調整過�
   const t = MT(); W = t ? clone(t.chapters) : []; wTpl = mk; wTouched = false;   // 空文件／未選範本：從空白開始
 }
 function refresh() {
-  if (tab === 'make') { syncW(); drawList(); gen(); }
+  if (tab === 'make') { syncW(); drawList(); gen(); drawRfp(); }
   if (tab === 'edit') { drawTree(); drawEd(); }
   if (tab === 'lib') drawLib();
 }
@@ -333,9 +358,9 @@ $('#wreset').onclick = () => {
   if (!confirm('從範本重新載入章節與區塊？本文件的排序、新增與修改都會捨棄，勾選也會清除。')) return;
   sel.clear(); manual = false; wTouched = false; syncW(); drawList(); gen(true); toast('已從範本重新載入');
 };
-$('#rfp').oninput = drawList;
+$('#rfp').oninput = () => { drawList(); clearTimeout(rfpT); rfpT = setTimeout(drawRfp, 200); };
 $('#hitsel').onclick = openHitPreview;
-$('#rfpinfo').onclick = e => { if (e.target.id === 'rfpex') { $('#rfp').value = RFP_EX; drawList(); } };
+$('#rfpinfo').onclick = e => { if (e.target.id === 'rfpex') { $('#rfp').value = RFP_EX; drawList(); drawRfp(); } };
 $('#all').onclick = () => mutate(() => W.forEach(c => c.blocks.forEach(b => sel.add(b.id))), false);
 $('#none').onclick = () => mutate(() => sel.clear(), false);
 
@@ -387,6 +412,65 @@ $('#oimg').onclick = async () => {
   }, '<button class="b" id="mup">＋上傳新圖片</button>');
 };
 
+const bigrams = t => { t = t.replace(/[\s\p{P}\p{S}]/gu, ''); const g = new Set(); for (let i = 0; i < t.length - 1; i++) g.add(t.slice(i, i + 2)); return g; };
+function scoreBlock(title, desc, b) {                              // 標題相近 + 關鍵字命中（標題命中的權重高於說明）
+  const t = title.toLowerCase(), bt = b.title.toLowerCase(), d = (title + '\n' + desc).toLowerCase(); let sc = 0;
+  if (bt.length >= 2 && t.length >= 2 && (t.includes(bt) || bt.includes(t))) sc += 10;
+  const A = bigrams(t), B = bigrams(bt); if (A.size && B.size) { let c = 0; A.forEach(x => B.has(x) && c++); const r = c / Math.min(A.size, B.size); if (r >= 0.5) sc += 8 * r; }
+  let kt = 0, kd = 0; (b.keywords || []).forEach(k => { k = (k || '').toLowerCase(); if (!k) return; if (t.includes(k)) kt++; else if (d.includes(k)) kd++; });
+  return sc + Math.min(kt, 2) * 5 + Math.min(kd, 3) * 2;
+}
+const bkey = b => b.title + '\u0000' + b.content;
+function rfpPool() {                                               // 可帶入的內容：目前範本 → 其他範本 → 區塊庫（相同內容只留一份）
+  const seen = new Set(), pool = [], chaps = [], add = (b, src) => { if (!seen.has(bkey(b))) { seen.add(bkey(b)); pool.push({ title: b.title, content: b.content, keywords: b.keywords || [], src }); } };
+  [MT(), ...DB.templates].filter(Boolean).forEach(t => t.chapters.forEach(c => { c.blocks.forEach(b => add(b, t.name)); if (c.blocks.length) chaps.push({ title: c.title, src: t.name, blocks: c.blocks }); }));
+  DB.library.forEach(b => add(b, '區塊庫'));
+  return { pool, chaps };
+}
+function chapScore(t, ct) {                                        // 大項 ↔ 範本章節：標題互相包含，或雙字組高度重疊
+  t = t.toLowerCase(); ct = ct.toLowerCase(); if (t.length < 2 || ct.length < 2) return 0; if (t.includes(ct) || ct.includes(t)) return 10;
+  const A = bigrams(t), B = bigrams(ct); if (!A.size || !B.size) return 0; let c = 0; A.forEach(x => B.has(x) && c++); const r = c / Math.min(A.size, B.size); return r >= 0.6 ? 8 * r : 0;
+}
+function rfpToChapters(p) {
+  // 只有大項：① 標題幾乎相同的區塊 → ② 對應整個範本章節 → ③ 關鍵字挑最多 3 個區塊 → ④ 待填；有子標題：子標題逐一對應區塊，找不到就待填
+  const { pool, chaps } = rfpPool(), used = new Set(), usedCh = new Set(), info = []; let matched = 0, blank = 0;
+  const pick = (title, desc, n, min) => pool.map(b => ({ b, s: scoreBlock(title, desc, b) })).filter(x => x.s >= min && !used.has(bkey(x.b))).sort((a, z) => z.s - a.s).slice(0, n);
+  const fill = (b, title) => { used.add(bkey(b)); return { id: uid(), title, content: b.content, keywords: [...(b.keywords || [])] }; }, empty = title => ({ id: uid(), title, content: `（請依 RFP「${title}」的要求撰寫）`, keywords: [] });
+  const chapters = p.items.map(it => {
+    const c = { id: uid(), title: it.title, blocks: [] }, inf = [];
+    if (it.subs.length) it.subs.forEach(sb => { const m = pick(sb.title, sb.desc, 1, 5)[0]; if (m) { c.blocks.push(fill(m.b, sb.title)); inf.push(`${m.b.title}（${m.b.src}）`); matched++; } else { c.blocks.push(empty(sb.title)); inf.push(null); blank++; } });
+    else {
+      let ms = pick(it.title, it.desc, 3, 15), ch = null;
+      if (ms.length) ms.forEach(m => { c.blocks.push(fill(m.b, m.b.title)); inf.push(`${m.b.src}`); matched++; });
+      else if ((ch = chaps.map(x => ({ x, s: chapScore(it.title, x.title) })).filter(x => x.s >= 8 && !usedCh.has(x.x)).sort((a, z) => z.s - a.s)[0])) {
+        usedCh.add(ch.x); ch.x.blocks.filter(b => !used.has(bkey(b))).forEach(b => { c.blocks.push(fill(b, b.title)); inf.push(`章節「${ch.x.title}」（${ch.x.src}）`); matched++; });
+      } else if ((ms = pick(it.title, it.desc, 3, 5)).length) ms.forEach(m => { c.blocks.push(fill(m.b, m.b.title)); inf.push(`${m.b.src}`); matched++; });
+      if (!c.blocks.length) { c.blocks.push(empty(it.title)); inf.push(null); blank++; }
+    }
+    info.push(inf); return c;
+  });
+  return { chapters, info, matched, blank };
+}
+function drawRfp() {                                // 預覽「依 RFP 目錄建立章節」的結果
+  const out = $('#rfprev'), txt = $('#rfp').value, p = rfpOutline();
+  $('#rfpbuild').disabled = !mk || !p.items.length;
+  if (!txt.trim() || !p.items.length) { out.hidden = true; return; }
+  out.hidden = false;
+  const r = rfpToChapters(p);
+  out.innerHTML = `<p class="dh">按「依 RFP 目錄建立章節」會建立 <b>${r.chapters.length}</b> 個章節${p.l2 ? '（子標題成為章節下的區塊）' : '（每個大項一章，內容帶入相符的區塊）'}：<b>${r.matched}</b> 個已找到相符內容，<b>${r.blank}</b> 個建立待填區塊。${mk ? '' : '請先選擇範本或空文件。'}</p><ul>` +
+    r.chapters.map((c, ci) => `<li><b>${esc(c.title)}</b><ul>${c.blocks.map((b, bi) => `<li>${esc(b.title)} ${r.info[ci][bi] ? `<span class="chip g">帶入：${esc(r.info[ci][bi])}</span>` : '<span class="chip w">待填</span>'}</li>`).join('')}</ul></li>`).join('') + '</ul>';
+}
+function buildFromRfp() {
+  if (!mk) return toast('請先選擇範本或空文件');
+  const p = rfpOutline(); if (!p.items.length) return toast('沒有偵測到 RFP 目錄項目');
+  if ((wTouched || W.length) && !confirm('這會以 RFP 目錄取代目前的章節結構，確定嗎？（範本不受影響）')) return;
+  if (!touch()) return;
+  const r = rfpToChapters(p); W = r.chapters; wTpl = mk; wTouched = true; sel.clear(); W.forEach(c => c.blocks.forEach(b => sel.add(b.id)));
+  drawList(); gen(true); toast(`已依 RFP 建立 ${W.length} 個章節、${r.matched + r.blank} 個區塊（${r.matched} 個已帶入相符內容，${r.blank} 個待填）`);
+}
+let rfpT;
+$('#rfpbuild').onclick = buildFromRfp;
+
 /* ---------- 製作進度列（引導使用流程）與使用說明 ---------- */
 const guideSeen = () => { try { return localStorage.getItem('pb.guide') === '1'; } catch { return true; } };
 const guideDismiss = () => { try { localStorage.setItem('pb.guide', '1'); } catch {} };
@@ -396,7 +480,9 @@ function flowSteps() {
   const s1 = !!mk && !!(M.案名 || '').trim(), s2 = sel.size > 0, s3 = pvSeen || manual, saved = !!docId && lastSaved === $('#out').value, s4 = saved;
   const hasRfp = !!rfpInfo().text.trim(), hb = mk && hasRfp ? hitPlan() : [], hn = hb.reduce((n, x) => n + x.blocks.length, 0);
   const total = totalBlocks(), badge = mk && total ? `（${sel.size}／${total}）` : '';
+  const ol = mk && hasRfp ? rfpOutline() : null;
   const pick = !mk ? { h: '先選擇範本或空文件', b: '選擇範本', go: () => $('#mtsel').focus() }
+    : !total && ol && ol.items.length ? { h: `RFP 偵測到 ${ol.l1} 個大項${ol.l2 ? `、${ol.l2} 個子標題` : ''}，可直接依目錄建立章節`, b: '依 RFP 建立章節', go: buildFromRfp }
     : !total ? { h: '新增章節，或從區塊庫挑選區塊', b: '從區塊庫選', go: () => startChapter(true) }
     : hasRfp && hn ? { h: `RFP 命中 ${hb.length} 章、${hn} 個區塊，確認後勾選`, b: '預覽命中清單', go: openHitPreview }
     : { h: hasRfp ? 'RFP 沒有命中項目，請手動勾選' : '貼上 RFP 讓系統標示相關區塊，或直接勾選／全選', b: hasRfp ? '全選' : '貼上 RFP', go: () => hasRfp ? $('#all').click() : $('#rfp').focus() };
@@ -429,8 +515,8 @@ function openGuide() {
   guideDismiss(); flowSig = ''; updFlow();
   openModal('使用流程', `<div class="gd">
     <h2>① 製作一份建議書</h2><ol>
-      ${it('1. 填基本資料', '在「製作」頁選擇範本（或空文件），填案名、機關、公司；可貼上 RFP（大項或含子標題皆可），比對到的章節／區塊會標示「RFP」。', 'make', '開始製作')}
-      ${it('2. 選擇內容', '勾選章節與區塊；拖曳 ⠿ 或按 ▲▼ 調整順序，＋ 新增區塊。調整只影響這一份文件。', '')}
+      ${it('1. 填基本資料', '在「製作」頁選擇範本（或空文件），填案名、機關、公司；可貼上 RFP（大項或含子標題皆可），比對到的章節／區塊會標示「RFP」，也能按「依 RFP 目錄建立章節」直接依 RFP 的順序與用語建立。', 'make', '開始製作')}
+      ${it('2. 選擇內容', '貼上 RFP 目錄後可按「依 RFP 目錄建立章節」，或用「預覽命中清單」確認後勾選；也可直接勾選章節與區塊，拖曳 ⠿ 或按 ▲▼ 調整順序，＋ 新增區塊。調整只影響這一份文件。', '')}
       ${it('3. 檢查與微調', '預覽成果，右側文字可直接修改，也能插入圖片。', '')}
       ${it('4. 儲存與匯出', '「儲存到文件庫」保留整份文件（之後可再修改），再選 Word 格式匯出。', '')}</ol>
     <h2>② 初次設定（只需做一次）</h2><ol>
