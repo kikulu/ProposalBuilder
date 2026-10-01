@@ -31,6 +31,7 @@ header .sp{flex:1}
 .stp.done{background:var(--acb);border-color:var(--ac);color:var(--ac)}.stp.cur{border-color:var(--hit);background:var(--hitb);color:var(--hit);font-weight:600}
 .flow .nx{margin-left:auto;font-size:13px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}.flow .nx .b{padding:3px 12px;font-size:13px}
 .welcome{flex-basis:100%;background:var(--acb);border-radius:4px;padding:6px 10px;font-size:13px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}.welcome span{flex:1 1 200px}
+.ro{border:1px solid var(--ln);border-radius:6px;padding:8px 10px;margin:8px 0;max-height:260px;overflow:auto;font-size:13px;background:#fafcfb}.ro ul{margin:2px 0 6px;padding-left:18px}.ro li{margin:2px 0}
 .gd h2{margin:14px 0 4px}.gd ol{margin:4px 0;padding-left:0;list-style:none}.gd li{display:flex;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid #eef2f1}.gd li .tx{flex:1;min-width:0}.gd li b{display:block;font-size:14px}.gd li small{color:var(--mut)}
 .gd kbd{background:#eef2f1;border:1px solid var(--ln);border-radius:3px;padding:0 5px;font-size:12px}
 main{display:grid;grid-template-columns:minmax(320px,440px) 1fr;gap:16px;padding:16px 20px;flex:1;min-height:0}
@@ -109,7 +110,7 @@ dl.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:8px 0;font
 .cm{padding:7px 8px;border-radius:4px;cursor:pointer;border-bottom:1px solid #eef2f1}.cm.on{background:var(--acb)}.cm b{display:block;font-weight:600;font-size:14px;overflow-wrap:anywhere}.cm small{color:var(--mut);font-size:12px}
 .fl{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:6px 0;border-bottom:1px solid var(--ln);font-size:14px}.fl .nm{flex:1 1 200px;min-width:0;overflow-wrap:anywhere}
 .st{font-size:11px;border-radius:3px;padding:0 5px;font-weight:700}.st.A{background:#e6f6ea;color:#1b6b34}.st.M{background:#fff3d6;color:#8a5a00}.st.D{background:#fde8e6;color:#b3261e}
-@media (max-width:520px){.bar .b{flex:1 1 auto}}
+@media (max-width:520px){.bar .b{flex:1 1 auto}#rfp{height:210px}}
 
 /* 對話框 / 提示 */
 #modal{position:fixed;inset:0;background:rgba(22,34,43,.55);display:flex;align-items:center;justify-content:center;z-index:9;padding:12px}
@@ -128,7 +129,7 @@ dl.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:8px 0;font
 @media (max-width:820px){
   body{display:block;height:auto;overflow:auto}
   header{position:sticky;top:0;padding:8px 12px}header h1{font-size:16px}
-  header .sp{display:none}header #tsel{flex:1;min-width:0}header .ht{display:none}header #help{padding:5px 11px}
+  header .sp{display:none}header .ht{display:none}header #help{padding:5px 11px}
   body{padding-bottom:calc(58px + env(safe-area-inset-bottom,0px))}
   #pnav{position:fixed;left:0;right:0;bottom:0;z-index:8;background:var(--ink);border-top:1px solid #33434e;padding-bottom:env(safe-area-inset-bottom,0px)}
   #pnav button{flex:1;flex-direction:column;justify-content:center;gap:1px;padding:7px 2px 6px;font-size:12px;border-bottom:0;border-top:2px solid transparent;min-width:0}
@@ -154,7 +155,6 @@ dl.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:8px 0;font
 <body>
 <header>
   <h1>服務建議書製作器</h1>
-  <select id="tsel" aria-label="選擇範本"></select>
   <nav id="pnav" aria-label="主要導覽">
     <button data-g="make"><span class="ni" aria-hidden="true">✎</span><span class="nl">製作</span></button>
     <button data-g="docs"><span class="ni" aria-hidden="true">▤</span><span class="nl">文件庫</span></button>
@@ -170,13 +170,18 @@ dl.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:8px 0;font
 <main id="make">
   <div id="flow" class="flow" style="grid-column:1/-1" aria-label="製作進度"></div>
   <section>
+    <h2>範本</h2>
+    <label>製作這份建議書要使用的範本<select id="mtsel" aria-label="選擇範本"></select></label>
     <h2>基本資料</h2>
     <label>案名<input type="text" data-m="案名"></label>
     <label>招標機關 / 客戶<input type="text" data-m="機關"></label>
     <label>提案公司<input type="text" data-m="公司"></label>
     <label>日期<input type="text" data-m="日期"></label>
-    <label>貼上 RFP 內容（含關鍵字的區塊會標示「RFP」）<textarea id="rfp" rows="5"></textarea></label>
-    <div class="row"><button class="b g" id="hitsel">勾選 RFP 命中項目</button><button class="b g" id="all">全選</button><button class="b g" id="none">清除</button></div>
+    <label>RFP 內容（可貼目錄或需求；含關鍵字的區塊會標示「RFP」）<textarea id="rfp" rows="15" placeholder="貼上 RFP 目錄或需求內容。兩種格式都可以：&#10;&#10;【只有大項】&#10;一、專案背景與目標&#10;二、需求範圍&#10;三、專案管理&#10;四、教育訓練&#10;&#10;【大項＋子標題】&#10;一、系統需求&#10;  （一）功能需求&#10;  （二）資安需求&#10;二、專案管理&#10;  （一）時程規劃&#10;  （二）品質管理"></textarea></label>
+    <p class="mut">支援「一、」「（一）」「1.」「1.1」「第一章」「A.」「#」等編號，縮排也能表示層級；只有大項，或大項＋子標題都可以。<button class="b g" id="rfpex" type="button" style="padding:1px 10px;font-size:12px">填入範例</button></p>
+    <div id="rfpout" class="ro" hidden></div>
+    <div class="row"><button class="b" id="rfpbuild" disabled>依 RFP 目錄建立章節</button><button class="b g" id="hitsel">勾選 RFP 命中項目</button></div>
+    <div class="row" style="margin-top:0"><button class="b g" id="all">全選</button><button class="b g" id="none">清除</button></div>
     <h2>章節與區塊</h2>
     <div class="row" style="margin-top:0"><button class="b g" id="wcadd">＋章節</button><button class="b g" id="wreset">從範本重新載入</button></div>
     <p class="mut">拖曳 ⠿ 或按 ▲▼ 調整順序（區塊可拖到其他章節）；＋ 新增區塊、✎ 修改內容。這裡的調整只影響本文件，不會改動範本。</p>
@@ -197,7 +202,8 @@ dl.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:8px 0;font
 
 <main id="edit" hidden>
   <section>
-    <div class="row" style="margin-top:0"><button class="b g" id="tnew">新增範本</button><button class="b g" id="tcopy">複製範本</button><button class="b d" id="tdel">刪除範本</button></div>
+    <label style="margin-top:0">正在維護的範本<select id="etsel" aria-label="選擇要維護的範本"></select></label>
+    <div class="row"><button class="b g" id="tnew">新增範本</button><button class="b g" id="tcopy">複製範本</button><button class="b d" id="tdel">刪除範本</button></div>
     <div class="row"><button class="b g" id="cadd">＋章節</button><button class="b d" id="reset">還原預設</button></div>
     <div id="tree"></div>
   </section>

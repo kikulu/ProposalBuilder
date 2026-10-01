@@ -5,13 +5,17 @@ const mv = (a, i, d) => { const j = i + d; if (j >= 0 && j < a.length) [a[i], a[
 const kw = s => s.split(/[,，、]/).map(x => x.trim()).filter(Boolean);
 const clone = o => JSON.parse(JSON.stringify(o));
 const TABS = ['make', 'edit', 'lib', 'docs', 'wst', 'files', 'hist', 'set'];
-let DB, cur, ed = null, sel = new Set(), libId = null, tab = 'make';
+let DB, cur, makeTpl = '', ed = null, sel = new Set(), libId = null, tab = 'make';
 let pvSeen = false, lastSaved = null, isDirty = false;   // 進度列與儲存狀態用
 let W = [], wTpl = null, wTouched = false;           // 本文件的章節/區塊（由範本複製，可自由調整，不影響範本）
 let manual = false, docId = null, docTitle = '', pvOn = false;   // manual：右側文字已手動修改
 let DOCS = [], vDoc = null, vEdit = false, wsId = null;
 const M = { 案名: '', 機關: '', 公司: '', 日期: new Date().toISOString().slice(0, 10) };
-const T = () => DB.templates.find(t => t.id === cur);
+const BLANK = '__blank__';                                   // 製作頁的「空文件」
+const T = () => DB.templates.find(t => t.id === cur);        // 「素材與範本」正在維護的範本（與製作頁的選擇互不影響）
+const mkT = () => makeTpl && makeTpl !== BLANK ? DB.templates.find(t => t.id === makeTpl) || null : null;
+const mkName = () => makeTpl === BLANK ? '空文件' : (mkT() ? mkT().name : '');
+const ensureTpl = () => { if (makeTpl === '') { makeTpl = BLANK; wTpl = BLANK; drawSel(); } };   // 沒選範本就開始加章節／貼 RFP → 視同空文件
 const toast = m => { const t = $('#toast'); t.textContent = m; t.classList.add('on'); clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove('on'), 2400); };
 const dirty = () => setDirty(true);
 const hit = b => { const r = $('#rfp').value; return r && (b.keywords || []).some(k => k && r.includes(k)); };
@@ -31,28 +35,35 @@ const okDiscard = () => !(wTouched || manual) || confirm('這會捨棄「製作�
 const newSession = () => { sel.clear(); docId = null; docTitle = ''; manual = false; wTouched = false; lastSaved = null; pvSeen = false; };
 
 async function init() {
-  DB = await api.load(); cur = DB.templates[0].id; wsId = DB.defaultWordStyle;
+  DB = await api.load(); cur = DB.templates[0].id; makeTpl = ''; wsId = DB.defaultWordStyle;
   document.querySelectorAll('[data-m]').forEach(i => { i.value = M[i.dataset.m]; i.oninput = () => { M[i.dataset.m] = i.value; gen(); }; });
   drawSel(); drawWsel(); refresh(); drawNav(); syncSave(); updFlow();
 }
-function drawSel() { $('#tsel').innerHTML = DB.templates.map(t => `<option value="${t.id}"${t.id === cur ? ' selected' : ''}>${esc(t.name)}</option>`).join(''); }
+function drawSel() {
+  const ot = DB.templates.map(t => `<option value="${t.id}"${t.id === makeTpl ? ' selected' : ''}>${esc(t.name)}</option>`).join('');
+  $('#mtsel').innerHTML = `<option value=""${makeTpl === '' ? ' selected' : ''} disabled>選擇範本</option>` + ot + `<option value="${BLANK}"${makeTpl === BLANK ? ' selected' : ''}>空文件（從零開始）</option>`;
+  $('#etsel').innerHTML = DB.templates.map(t => `<option value="${t.id}"${t.id === cur ? ' selected' : ''}>${esc(t.name)}</option>`).join('');
+}
 function drawWsel() {
   const o = DB.wordStyles.map(s => `<option value="${s.id}"${s.id === DB.defaultWordStyle ? ' selected' : ''}>${esc(s.name)}</option>`).join('');
   $('#wsel').innerHTML = o; const d = $('#dws'); if (d) d.innerHTML = o;
 }
 function syncW() {                                    // 沒有手動調整過時，隨範本更新；調整過就保留
-  const t = T(); if (!t || (wTpl === cur && wTouched)) return;
-  W = clone(t.chapters); wTpl = cur; wTouched = false;
+  if (wTpl === makeTpl && wTouched) return;
+  if (makeTpl === '' || makeTpl === BLANK) { W = []; wTpl = makeTpl; wTouched = false; return; }
+  const t = mkT(); if (!t) { W = []; wTpl = makeTpl; wTouched = false; return; }
+  W = clone(t.chapters); wTpl = makeTpl; wTouched = false;
 }
 function refresh() {
-  if (tab === 'make') { syncW(); drawList(); gen(); }
+  if (tab === 'make') { syncW(); drawList(); gen(); drawRfp(); }
   if (tab === 'edit') { drawTree(); drawEd(); }
   if (tab === 'lib') drawLib();
 }
-$('#tsel').onchange = e => {
-  if (!okDiscard()) { e.target.value = cur; return; }
-  cur = e.target.value; newSession(); ed = null; refresh();
+$('#mtsel').onchange = e => {                        // 製作頁：換範本 = 開一份新的（基本資料保留）
+  if (!okDiscard()) { drawSel(); return; }
+  makeTpl = e.target.value; newSession(); refresh();
 };
+$('#etsel').onchange = e => { cur = e.target.value; ed = null; drawSel(); refresh(); };   // 維護頁：只改「正在維護哪個範本」，不影響製作頁
 /* ---------- 導覽：主導覽 4 群組 + 次導覽；儲存狀態 ---------- */
 const GROUPS = [
   { g: 'make', tabs: [['make', '製作建議書']] },
@@ -80,7 +91,6 @@ function drawNav() {
 function setTab(t) {
   tab = t; lastIn[groupOf(t).g] = t;
   TABS.forEach(id => $('#' + id).hidden = id !== t);
-  $('#tsel').hidden = !['make', 'edit', 'lib'].includes(t);
   drawNav(); syncSave();
   refresh(); if (t === 'docs') loadDocs(); if (t === 'wst') drawWs(); if (t === 'files') loadFiles(); if (t === 'hist') drawHist(); if (t === 'set') drawSet();
 }
@@ -129,7 +139,7 @@ function drawList() {
         `<button class="ic" data-a="be" data-ci="${ci}" data-bi="${bi}" title="編輯內容（僅本文件）" aria-label="編輯區塊">✎</button>` +
         `<button class="ic x" data-a="bx" data-ci="${ci}" data-bi="${bi}" title="從本文件移除區塊" aria-label="移除區塊">✕</button></div>`).join('')
         : '<div class="empty">沒有區塊：可把區塊拖到這裡，或按 ＋ 新增</div>') + '</div>';
-  }).join('') || '<p class="mut">尚無章節，請按「＋章節」。</p>';
+  }).join('') || `<p class="mut">${makeTpl === '' ? '請先在上方「選擇範本」，或選「空文件」從零開始。也可以貼上 RFP，再按「依 RFP 目錄建立章節」。' : '這是空文件：按「＋章節」開始，或貼上 RFP 後按「依 RFP 目錄建立章節」。'}</p>`;
   $('#list').querySelectorAll('[data-part]').forEach(i => i.indeterminate = true);
 }
 const L = $('#list');
@@ -230,12 +240,11 @@ function openChapterEdit(ci) {
     $('#e1').focus();
   });
 }
-$('#wcadd').onclick = () => { if (!touch()) return; W.push({ id: uid(), title: '新章節', blocks: [] }); wTouched = true; drawList(); gen(true); openChapterEdit(W.length - 1); };
+$('#wcadd').onclick = () => { if (!touch()) return; ensureTpl(); W.push({ id: uid(), title: '新章節', blocks: [] }); wTouched = true; drawList(); gen(true); openChapterEdit(W.length - 1); };
 $('#wreset').onclick = () => {
   if (!confirm('從範本重新載入章節與區塊？本文件的排序、新增與修改都會捨棄，勾選也會清除。')) return;
   sel.clear(); manual = false; wTouched = false; syncW(); drawList(); gen(true); toast('已從範本重新載入');
 };
-$('#rfp').oninput = drawList;
 $('#hitsel').onclick = () => mutate(() => W.forEach(c => c.blocks.forEach(b => hit(b) && sel.add(b.id))), false);
 $('#all').onclick = () => mutate(() => W.forEach(c => c.blocks.forEach(b => sel.add(b.id))), false);
 $('#none').onclick = () => mutate(() => sel.clear(), false);
@@ -288,17 +297,113 @@ $('#oimg').onclick = async () => {
   }, '<button class="b" id="mup">＋上傳新圖片</button>');
 };
 
+/* ---------- RFP 目錄解析（大項 / 子標題）與對應 ---------- */
+const CN = '一二三四五六七八九十百零〇兩壹貳參叄肆伍陸柒捌玖拾';
+const R3 = [/^\d+(?:\.\d+){2,}[\s、.:：)）]*(.*)$/, /^#{3,}\s*(.*)$/];
+const R2 = [new RegExp('^[（(]\\s*[' + CN + ']+\\s*[）)]\\s*[、.:：]?\\s*(.*)$'), /^\d+\.\d+(?!\.?\d)[\s、.:：)）]*(.*)$/, /^[（(]\s*\d+\s*[）)]\s*(.*)$/, /^##\s*(.*)$/, /^[a-z][.)）、]\s*(.*)$/, /^\d+-\d+[\s、.:：]+(.*)$/];
+const R1 = [new RegExp('^第\\s*[' + CN + '\\d]+\\s*[章節部分篇項]\\s*[、.:：]?\\s*(.*)$'), new RegExp('^[' + CN + ']+\\s*[、.．]\\s*(.*)$'), /^\d{1,2}(?:[、)）]|\.(?!\d))\s*(.*)$/, /^[A-Z][、.．)）]\s*(.*)$/, /^#\s*(.*)$/, /^[■●◆▲★]\s*(.*)$/];
+function classifyRfp(raw) {
+  const t = raw.trim(); if (!t) return null;
+  const indent = raw.match(/^[ \t\u3000]*/)[0].replace(/\t/g, '    ').replace(/\u3000/g, '  ').length;
+  for (const [lv, list] of [[3, R3], [2, R2], [1, R1]]) for (const r of list) { const m = t.match(r); if (m) return { lv, title: (m[1] || '').trim(), indent }; }
+  return { lv: 0, title: t.replace(/^[-*•·]\s+/, ''), indent };
+}
+function splitTitle(t) {                                     // 長句（常見於編號的條款）：取前段當標題，其餘當說明
+  t = t.replace(/[。；;，,：:\s]+$/, ''); if (t.length <= 28) return { title: t, rest: '' };
+  const m = t.slice(0, 40).search(/[：:，,。；;]/);
+  return m > 1 ? { title: t.slice(0, m), rest: t.slice(m + 1).trim() } : { title: t.slice(0, 28) + '…', rest: t };
+}
+function parseRfp(text) {
+  const rows = String(text || '').replace(/\r/g, '').split('\n').map(classifyRfp).filter(Boolean), items = [];
+  let curI = null, curS = null;
+  const desc = t => { const g = curS || curI; if (g && t) g.desc += (g.desc ? '\n' : '') + t; };
+  const newItem = t => { const x = splitTitle(t); if (!x.title) return false; curI = { title: x.title, desc: x.rest, subs: [] }; curS = null; items.push(curI); return true; };
+  const newSub = t => { const x = splitTitle(t); if (!x.title) return; if (!curI) newItem('（未分類）'); curS = { title: x.title, desc: x.rest }; curI.subs.push(curS); };
+  if (rows.some(r => r.lv > 0)) {
+    const minLv = Math.min(...rows.filter(r => r.lv > 0).map(r => r.lv));
+    rows.forEach(r => { if (r.lv > 0) r.lv -= minLv - 1; });          // 沒有最高層的編號時，把現有最高層視為大項
+    let base = null;
+    rows.forEach(r => { if (r.lv === 1) { if (base === null) base = r.indent; else if (r.indent >= base + 2) r.lv = 2; } });   // 同一種編號靠縮排表示子層
+    rows.forEach(r => { if (r.lv === 1) newItem(r.title); else if (r.lv === 2) newSub(r.title); else desc(r.title); });
+  } else {                                                          // 完全沒有編號：短行當標題，縮排的當子標題，長行當說明
+    const base = Math.min(...rows.map(r => r.indent));
+    rows.forEach(r => { if (r.title.length > 40) desc(r.title); else if (r.indent >= base + 2 && curI) newSub(r.title); else newItem(r.title); });
+  }
+  return { items, l1: items.length, l2: items.reduce((n, i) => n + i.subs.length, 0) };
+}
+const bigrams = t => { t = t.replace(/[\s\p{P}\p{S}]/gu, ''); const g = new Set(); for (let i = 0; i < t.length - 1; i++) g.add(t.slice(i, i + 2)); return g; };
+function scoreBlock(title, desc, b) {                              // 標題相近 + 關鍵字命中（標題命中的權重高於說明）
+  const t = title.toLowerCase(), bt = b.title.toLowerCase(), d = (title + '\n' + desc).toLowerCase(); let sc = 0;
+  if (bt.length >= 2 && t.length >= 2 && (t.includes(bt) || bt.includes(t))) sc += 10;
+  const A = bigrams(t), B = bigrams(bt); if (A.size && B.size) { let c = 0; A.forEach(x => B.has(x) && c++); const r = c / Math.min(A.size, B.size); if (r >= 0.5) sc += 8 * r; }
+  let kt = 0, kd = 0; (b.keywords || []).forEach(k => { k = (k || '').toLowerCase(); if (!k) return; if (t.includes(k)) kt++; else if (d.includes(k)) kd++; });
+  return sc + Math.min(kt, 2) * 5 + Math.min(kd, 3) * 2;
+}
+const bkey = b => b.title + '\u0000' + b.content;
+function rfpPool() {                                               // 可帶入的內容：目前範本 → 其他範本 → 區塊庫（相同內容只留一份）
+  const seen = new Set(), pool = [], chaps = [], add = (b, src) => { if (!seen.has(bkey(b))) { seen.add(bkey(b)); pool.push({ title: b.title, content: b.content, keywords: b.keywords || [], src }); } };
+  [mkT(), ...DB.templates].filter(Boolean).forEach(t => t.chapters.forEach(c => { c.blocks.forEach(b => add(b, t.name)); if (c.blocks.length) chaps.push({ title: c.title, src: t.name, blocks: c.blocks }); }));
+  DB.library.forEach(b => add(b, '區塊庫'));
+  return { pool, chaps };
+}
+function chapScore(t, ct) {                                        // 大項 ↔ 範本章節：標題互相包含，或雙字組高度重疊
+  t = t.toLowerCase(); ct = ct.toLowerCase(); if (t.length < 2 || ct.length < 2) return 0; if (t.includes(ct) || ct.includes(t)) return 10;
+  const A = bigrams(t), B = bigrams(ct); if (!A.size || !B.size) return 0; let c = 0; A.forEach(x => B.has(x) && c++); const r = c / Math.min(A.size, B.size); return r >= 0.6 ? 8 * r : 0;
+}
+function rfpToChapters(p) {
+  // 只有大項：① 標題幾乎相同的區塊 → ② 對應整個範本章節 → ③ 關鍵字挑最多 3 個區塊 → ④ 待填；有子標題：子標題逐一對應區塊，找不到就待填
+  const { pool, chaps } = rfpPool(), used = new Set(), usedCh = new Set(), info = []; let matched = 0, blank = 0;
+  const pick = (title, desc, n, min) => pool.map(b => ({ b, s: scoreBlock(title, desc, b) })).filter(x => x.s >= min && !used.has(bkey(x.b))).sort((a, z) => z.s - a.s).slice(0, n);
+  const fill = (b, title) => { used.add(bkey(b)); return { id: uid(), title, content: b.content, keywords: [...(b.keywords || [])] }; }, empty = title => ({ id: uid(), title, content: `（請依 RFP「${title}」的要求撰寫）`, keywords: [] });
+  const chapters = p.items.map(it => {
+    const c = { id: uid(), title: it.title, blocks: [] }, inf = [];
+    if (it.subs.length) it.subs.forEach(sb => { const m = pick(sb.title, sb.desc, 1, 5)[0]; if (m) { c.blocks.push(fill(m.b, sb.title)); inf.push(`${m.b.title}（${m.b.src}）`); matched++; } else { c.blocks.push(empty(sb.title)); inf.push(null); blank++; } });
+    else {
+      let ms = pick(it.title, it.desc, 3, 15), ch = null;
+      if (ms.length) ms.forEach(m => { c.blocks.push(fill(m.b, m.b.title)); inf.push(`${m.b.src}`); matched++; });
+      else if ((ch = chaps.map(x => ({ x, s: chapScore(it.title, x.title) })).filter(x => x.s >= 8 && !usedCh.has(x.x)).sort((a, z) => z.s - a.s)[0])) {
+        usedCh.add(ch.x); ch.x.blocks.filter(b => !used.has(bkey(b))).forEach(b => { c.blocks.push(fill(b, b.title)); inf.push(`章節「${ch.x.title}」（${ch.x.src}）`); matched++; });
+      } else if ((ms = pick(it.title, it.desc, 3, 5)).length) ms.forEach(m => { c.blocks.push(fill(m.b, m.b.title)); inf.push(`${m.b.src}`); matched++; });
+      if (!c.blocks.length) { c.blocks.push(empty(it.title)); inf.push(null); blank++; }
+    }
+    info.push(inf); return c;
+  });
+  return { chapters, info, matched, blank };
+}
+function drawRfp() {
+  const out = $('#rfpout'), txt = $('#rfp').value, p = parseRfp(txt);
+  $('#rfpbuild').disabled = !p.items.length;
+  if (!txt.trim()) { out.hidden = true; return; }
+  out.hidden = false;
+  if (!p.items.length) { out.innerHTML = '<p class="mut">沒有偵測到目錄項目（大項／子標題）。仍可用「勾選 RFP 命中項目」依關鍵字標示相關區塊。</p>'; return; }
+  const r = rfpToChapters(p);
+  out.innerHTML = `<p class="dh">偵測到 <b>${p.l1}</b> 個大項${p.l2 ? `、<b>${p.l2}</b> 個子標題（子標題會成為章節下的區塊）` : '（只有大項：每個大項成為一個章節，內容帶入相符的區塊）'}。<b>${r.matched}</b> 個已找到相符內容，<b>${r.blank}</b> 個會建立待填區塊。</p><ul>` +
+    r.chapters.map((c, ci) => `<li><b>${esc(c.title)}</b><ul>${c.blocks.map((b, bi) => `<li>${esc(b.title)} ${r.info[ci][bi] ? `<span class="chip g">帶入：${esc(r.info[ci][bi])}</span>` : '<span class="chip w">待填</span>'}</li>`).join('')}</ul></li>`).join('') + '</ul>';
+}
+const RFP_SAMPLE = '一、系統需求\n  （一）功能需求\n  （二）資安需求\n二、專案管理\n  （一）時程規劃\n  （二）品質管理\n三、教育訓練與維運';
+let rfpT;
+$('#rfp').oninput = () => { drawList(); clearTimeout(rfpT); rfpT = setTimeout(drawRfp, 200); };
+$('#rfpex').onclick = () => { if ($('#rfp').value.trim() && !confirm('要用範例取代目前貼上的 RFP 內容嗎？')) return; $('#rfp').value = RFP_SAMPLE; drawList(); drawRfp(); };
+$('#rfpbuild').onclick = () => {
+  const p = parseRfp($('#rfp').value); if (!p.items.length) return toast('沒有偵測到 RFP 目錄項目');
+  if ((wTouched || W.length) && !confirm('這會以 RFP 目錄取代目前的章節結構，確定嗎？（範本不受影響）')) return;
+  if (!touch()) return; ensureTpl();
+  const r = rfpToChapters(p); W = r.chapters; wTpl = makeTpl; wTouched = true; sel.clear(); W.forEach(c => c.blocks.forEach(b => sel.add(b.id)));
+  drawList(); gen(true); toast(`已依 RFP 建立 ${W.length} 個章節、${r.matched + r.blank} 個區塊（${r.matched} 個已帶入相符內容，${r.blank} 個待填）`);
+};
+
 /* ---------- 製作進度列（引導使用流程）與使用說明 ---------- */
 const guideSeen = () => { try { return localStorage.getItem('pb.guide') === '1'; } catch { return true; } };
 const guideDismiss = () => { try { localStorage.setItem('pb.guide', '1'); } catch {} };
 let flowSig = '';
 function flowSteps() {
-  const s1 = !!(M.案名 || '').trim(), s2 = sel.size > 0, s3 = pvSeen || manual, saved = !!docId && lastSaved === $('#out').value, s4 = saved;
+  const s0 = makeTpl !== '', s1 = !!(M.案名 || '').trim(), s2 = sel.size > 0, s3 = pvSeen || manual, saved = !!docId && lastSaved === $('#out').value;
   return [
-    { t: '基本資料', d: s1, h: s1 ? '' : '先填寫案名（也建議填機關與公司）', b: '填寫案名', go: () => $('[data-m=案名]').focus() },
-    { t: '選擇內容', d: s2, h: s2 ? '' : '貼上 RFP 讓系統標示相關區塊，或直接勾選／全選', b: '貼上 RFP', go: () => $('#rfp').focus() },
+    { t: '選擇範本', d: s0, h: '先選擇範本，或選「空文件」從零開始（也可以直接貼上 RFP 建立章節）', b: '選擇範本', go: () => $('#mtsel').focus() },
+    { t: '基本資料', d: s1, h: '先填寫案名（也建議填機關與公司）', b: '填寫案名', go: () => $('[data-m=案名]').focus() },
+    { t: '選擇內容', d: s2, h: '貼上 RFP 後按「依 RFP 目錄建立章節」，或直接勾選區塊', b: '貼上 RFP', go: () => $('#rfp').focus() },
     { t: '檢查微調', d: s3, h: '預覽成果；可拖曳調整順序、直接修改右側文字、插入圖片', b: '預覽', go: () => setPv(true) },
-    { t: '儲存匯出', d: s4, h: docId && !saved ? '有尚未儲存的修改' : '存入文件庫，再匯出 Word', b: '儲存到文件庫', go: () => saveDoc(false) }
+    { t: '儲存匯出', d: saved, h: docId && !saved ? '有尚未儲存的修改' : '存入文件庫，再匯出 Word', b: '儲存到文件庫', go: () => saveDoc(false) }
   ];
 }
 function updFlow() {
@@ -323,8 +428,8 @@ function openGuide() {
   guideDismiss(); flowSig = ''; updFlow();
   openModal('使用流程', `<div class="gd">
     <h2>① 製作一份建議書</h2><ol>
-      ${it('1. 填基本資料', '選好範本，填案名、機關、公司；可貼上 RFP，命中關鍵字的區塊會標示「RFP」。', 'make', '開始製作')}
-      ${it('2. 選擇內容', '勾選章節與區塊；拖曳 ⠿ 或按 ▲▼ 調整順序，＋ 新增區塊。調整只影響這一份文件。', '')}
+      ${it('1. 選範本、填基本資料', '從「選擇範本」挑一個範本，或選「空文件」從零開始；再填案名、機關、公司。', 'make', '開始製作')}
+      ${it('2. 貼上 RFP 並選擇內容', '貼上 RFP 目錄（只有大項，或大項＋子標題都可以）後按「依 RFP 目錄建立章節」；也可直接勾選章節與區塊，拖曳 ⠿ 或 ▲▼ 調整順序。調整只影響這一份文件。', '')}
       ${it('3. 檢查與微調', '預覽成果，右側文字可直接修改，也能插入圖片。', '')}
       ${it('4. 儲存與匯出', '「儲存到文件庫」保留整份文件（之後可再修改），再選 Word 格式匯出。', '')}</ol>
     <h2>② 初次設定（只需做一次）</h2><ol>
@@ -404,8 +509,8 @@ const optHtml = (list, cur) => list.map(v => `<option value="${esc(v)}"${v === c
 /* ---------- 文件庫 ---------- */
 async function saveDoc(asNew) {
   const r = await api.docSave({
-    id: asNew ? null : docId, title: M.案名 || '未命名建議書', tpl: T().name, md: $('#out').value,
-    meta: { M: { ...M }, rfp: $('#rfp').value, sel: [...sel], chapters: W, tplId: cur }
+    id: asNew ? null : docId, title: M.案名 || '未命名建議書', tpl: mkName(), md: $('#out').value,
+    meta: { M: { ...M }, rfp: $('#rfp').value, sel: [...sel], chapters: W, tplId: makeTpl }
   });
   docId = r.id; docTitle = r.title; lastSaved = $('#out').value; updInfo(); toast(asNew ? '已另存為新文件' : '已儲存到文件庫');
 }
@@ -414,11 +519,11 @@ $('#dsaveas').onclick = () => saveDoc(true);
 async function openDoc(id) {
   const d = vDoc && vDoc.id === id ? vDoc : await api.docGet(id); if (!d) return toast('找不到此文件');
   if ((wTouched || manual) && !confirm('載入文件會取代「製作建議書」目前編輯中的內容。確定嗎？')) return;
-  const m = d.meta || {}, t = DB.templates.find(x => x.id === m.tplId) || DB.templates.find(x => x.name === d.tpl) || DB.templates[0];
-  cur = t.id; drawSel();
+  const m = d.meta || {};
+  makeTpl = m.tplId === BLANK || d.tpl === '空文件' ? BLANK : ((DB.templates.find(x => x.id === m.tplId) || DB.templates.find(x => x.name === d.tpl) || {}).id || BLANK); drawSel();
   Object.assign(M, m.M || {}); document.querySelectorAll('[data-m]').forEach(i => i.value = M[i.dataset.m] || '');
-  $('#rfp').value = m.rfp || '';
-  if (Array.isArray(m.chapters)) { W = clone(m.chapters); wTpl = cur; wTouched = true; } else { wTouched = false; wTpl = null; syncW(); }
+  $('#rfp').value = m.rfp || ''; drawRfp();
+  if (Array.isArray(m.chapters)) { W = clone(m.chapters); wTpl = makeTpl; wTouched = true; } else { wTouched = false; wTpl = null; syncW(); }
   sel = new Set(m.sel || []); docId = d.id; docTitle = d.title;
   setTab('make');
   $('#out').value = d.md; lastSaved = d.md; pvSeen = true; manual = d.md !== buildMd();     // 與依設定產生的結果不同，代表存檔前有手動修改
@@ -629,9 +734,10 @@ function drawLibEd() {
     <label>分類<input type="text" id="l0" list="lgl" value="${esc(b.group || '')}" placeholder="例如：自訂"></label><datalist id="lgl">${[...new Set(DB.library.map(x => x.group).filter(Boolean))].map(g => `<option value="${esc(g)}">`).join('')}</datalist>
     <label>RFP 關鍵字（以逗號分隔）<input type="text" id="l2" value="${esc((b.keywords || []).join(','))}"></label>
     <label>內文（Markdown）<textarea id="l3" rows="14">${esc(b.content)}</textarea></label>
-    <div class="row"><select id="l4" style="width:auto">${T().chapters.map((c, i) => `<option value="${i}">${esc(c.title)}</option>`).join('')}</select>
-    <button class="b g" id="l5">插入到「${esc(T().name)}」此章節</button><button class="b d" id="l6">刪除區塊</button></div>`;
+    <div class="row"><select id="l7" style="width:auto" aria-label="目標範本">${DB.templates.map(t => `<option value="${t.id}"${t.id === cur ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select><select id="l4" style="width:auto" aria-label="目標章節">${T().chapters.map((c, i) => `<option value="${i}">${esc(c.title)}</option>`).join('')}</select>
+    <button class="b g" id="l5">插入到此章節</button><button class="b d" id="l6">刪除區塊</button></div>`;
   $('#l1').oninput = e => { b.title = e.target.value; drawLibList(); dirty(); };
+  $('#l7').onchange = e => { cur = e.target.value; ed = null; drawSel(); drawLibEd(); };
   $('#l0').onchange = e => { b.group = e.target.value.trim(); dirty(); drawLib(); };
   $('#l2').oninput = e => { b.keywords = kw(e.target.value); dirty(); };
   $('#l3').oninput = e => { b.content = e.target.value; dirty(); };
